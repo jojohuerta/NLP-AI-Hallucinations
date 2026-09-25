@@ -14,6 +14,9 @@ pip install torch
 
 pip install datasets
 
+pip install altair
+
 python test_pytorch.py
+python data_analysis.py
 ```
 Note: datasets includes pandas
