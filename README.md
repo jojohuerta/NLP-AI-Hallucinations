@@ -12,5 +12,8 @@ pip install numpy
 
 pip install torch
 
+pip install datasets
+
 python test_pytorch.py
 ```
+Note: datasets includes pandas
