@@ -61,7 +61,7 @@ chart_len = alt.Chart(df_vis[df_vis["has_hallucination"] == True]).mark_bar(opac
     y=alt.Y("count():Q", title="Frequency"),
     tooltip=["count()"]
 ).properties(
-    title="Does hallucination correlate with response length?",
+    title="Distribution of Length in Responses with Hallucinations",
     width=500,
     height=300
 )
@@ -77,6 +77,17 @@ chart_class = alt.Chart(df_vis).mark_arc(innerRadius=60).encode(
     height=300
 )
 
+# Chart D: Distribution of response length (All texts)
+chart_len_all = alt.Chart(df_vis).mark_bar(opacity=0.8, color='#54A24B').encode(
+    x=alt.X("output_words:Q", bin=alt.Bin(maxbins=40), title="Response Length (Words)"),
+    y=alt.Y("count():Q", title="Frequency"),
+    tooltip=["count()"]
+).properties(
+    title="Distribution of Response Length (All Texts)",
+    width=500,
+    height=300
+)
+
 
 # Exporting
 os.makedirs("graphs", exist_ok=True)
@@ -84,5 +95,6 @@ os.makedirs("graphs", exist_ok=True)
 chart_lang.save("graphs/chart_lang.html")
 chart_len.save("graphs/chart_len.html")
 chart_class.save("graphs/chart_class.html")
+chart_len_all.save("graphs/chart_len_all.html")
 
 print("Charts successfully saved in the /graphs folder!")
