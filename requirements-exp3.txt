@@ -1,0 +1,21 @@
+# Dependencias del Experimento 3
+# Instalación: pip install -r requirements-exp3.txt
+#
+# El modelo de spaCy se instala como paquete. Si la rueda de abajo falla,
+# usar: python -m spacy download en_core_web_sm
+
+datasets>=4.0
+pandas>=2.0
+numpy>=1.26
+altair>=5.0
+scikit-learn>=1.4
+scipy>=1.11
+torch>=2.2
+transformers>=4.45
+accelerate>=1.0
+spacy>=3.8,<4.0
+
+en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
+
+# Opcional: exportar los gráficos Altair también a PNG
+# vl-convert-python>=1.7
