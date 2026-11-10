@@ -1,0 +1,15 @@
+# Dependencias del Experimento 2
+# Instalación: pip install -r requirements-exp2.txt
+
+datasets>=4.0
+pandas>=2.0
+numpy>=1.26
+altair>=5.0
+scikit-learn>=1.4
+scipy>=1.11
+torch>=2.2
+transformers>=4.45
+accelerate>=1.0
+
+# Opcional: exportar los gráficos Altair también a PNG
+# vl-convert-python>=1.7

@@ -23,3 +23,7 @@ datasets/
 .idea/
 
 graphs/
+results/
+
+# Checkpoints grandes generados por los experimentos
+results/**/transformer_checkpoints/
