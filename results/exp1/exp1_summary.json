@@ -1,0 +1,200 @@
+{
+  "experiment": "exp1_lexical_perplexity",
+  "seed": 42,
+  "dataset": {
+    "name": "Helsinki-NLP/mu-shroom",
+    "config": "en",
+    "splits": [
+      "validation",
+      "test"
+    ],
+    "n_documents": 204,
+    "n_documents_with_hallucination": 197
+  },
+  "corpora": {
+    "n_segments_a": 609,
+    "n_segments_b": 599,
+    "n_segments_used_tfidf": 797,
+    "n_documents_used_tfidf": 185
+  },
+  "tfidf": {
+    "n_train_segments": 623,
+    "n_test_segments": 174,
+    "n_train_documents": 138,
+    "n_test_documents": 47,
+    "macro_f1_test": 0.649135565766421,
+    "vocabulary_size_eval": 692,
+    "n_features_full_fit": 892,
+    "coefficient_ttest": {
+      "t_statistic": -3.508467562214173,
+      "p_value": 0.000473245246142452,
+      "mean_coefficient": -0.04362677013698286,
+      "std_coefficient": 0.37137958213864275,
+      "n_features": 892
+    },
+    "top_features": [
+      {
+        "feature": "located",
+        "coefficient": -1.882359354827524,
+        "ci_low": -2.071718310119657,
+        "ci_high": -1.271162661339138,
+        "direction": "B (veraz)",
+        "significant_95ci": true
+      },
+      {
+        "feature": "population",
+        "coefficient": -1.3279360099106396,
+        "ci_low": -1.6242793527625665,
+        "ci_high": -0.6401941258987808,
+        "direction": "B (veraz)",
+        "significant_95ci": true
+      },
+      {
+        "feature": "won",
+        "coefficient": -1.3223254224661558,
+        "ci_low": -1.6268715456496932,
+        "ci_high": -0.3740695506122822,
+        "direction": "B (veraz)",
+        "significant_95ci": true
+      },
+      {
+        "feature": "born",
+        "coefficient": -1.307105763978224,
+        "ci_low": -1.6103956336556229,
+        "ci_high": -0.5824347026300668,
+        "direction": "B (veraz)",
+        "significant_95ci": true
+      },
+      {
+        "feature": "called",
+        "coefficient": -1.2003664961323601,
+        "ci_low": -1.4030345336716337,
+        "ci_high": -0.5156544555280409,
+        "direction": "B (veraz)",
+        "significant_95ci": true
+      },
+      {
+        "feature": "released",
+        "coefficient": -1.197765655590177,
+        "ci_low": -1.4479747126197011,
+        "ci_high": 0.0,
+        "direction": "B (veraz)",
+        "significant_95ci": false
+      },
+      {
+        "feature": "known",
+        "coefficient": -1.1665299439328125,
+        "ci_low": -1.566278420380014,
+        "ci_high": -0.3085212095878936,
+        "direction": "B (veraz)",
+        "significant_95ci": true
+      },
+      {
+        "feature": "total",
+        "coefficient": -1.1410037801440378,
+        "ci_low": -1.4024559237067686,
+        "ci_high": -0.3783876269275144,
+        "direction": "B (veraz)",
+        "significant_95ci": true
+      },
+      {
+        "feature": "bc",
+        "coefficient": 1.0411916582515168,
+        "ci_low": 0.12552028438963428,
+        "ci_high": 1.3849237967258348,
+        "direction": "A (alucinación)",
+        "significant_95ci": true
+      },
+      {
+        "feature": "march",
+        "coefficient": 0.9775792473073266,
+        "ci_low": 0.46821680879317257,
+        "ci_high": 1.1952101620401447,
+        "direction": "A (alucinación)",
+        "significant_95ci": true
+      },
+      {
+        "feature": "species",
+        "coefficient": -0.9626141097868326,
+        "ci_low": -1.3197945951547008,
+        "ci_high": -0.2103228682538331,
+        "direction": "B (veraz)",
+        "significant_95ci": true
+      },
+      {
+        "feature": "yes",
+        "coefficient": -0.9508309625020823,
+        "ci_low": -1.4356986186890364,
+        "ci_high": 0.06983903642898574,
+        "direction": "B (veraz)",
+        "significant_95ci": false
+      },
+      {
+        "feature": "club",
+        "coefficient": -0.9303087267672836,
+        "ci_low": -1.094116143390471,
+        "ci_high": 0.0,
+        "direction": "B (veraz)",
+        "significant_95ci": false
+      },
+      {
+        "feature": "bmw",
+        "coefficient": -0.9140418302623718,
+        "ci_low": -1.61523451320676,
+        "ci_high": 0.0,
+        "direction": "B (veraz)",
+        "significant_95ci": false
+      },
+      {
+        "feature": "23",
+        "coefficient": 0.866921851972841,
+        "ci_low": 0.0,
+        "ci_high": 1.0842183734106736,
+        "direction": "A (alucinación)",
+        "significant_95ci": false
+      }
+    ]
+  },
+  "perplexity": {
+    "lm": "gpt2",
+    "device": "cuda",
+    "n_documents_processed": 204,
+    "n_documents_evaluated": 167,
+    "n_documents_skipped_min_tokens": 37,
+    "n_documents_truncated": 0,
+    "max_length": 1024,
+    "min_tokens_per_corpus": 2,
+    "n_documents_paired": 167,
+    "n_tokens_a_total": 3272,
+    "n_tokens_b_total": 5505,
+    "mean_nll_a": 3.9082749788920466,
+    "mean_nll_b": 3.9059703022576877,
+    "mean_ppl_a": 49.81294942741903,
+    "mean_ppl_b": 49.698278876810846,
+    "pooled_ppl_a": 30.79326815822195,
+    "pooled_ppl_b": 24.391029279363735,
+    "median_ppl_a": 38.595746651410046,
+    "median_ppl_b": 35.96077006457121,
+    "mean_delta_nll": 0.002304676634358854,
+    "delta_nll_ci95_low": -0.24158174960954146,
+    "delta_nll_ci95_high": 0.24619110287825915,
+    "paired_ttest": {
+      "t_statistic": 0.018657275338551008,
+      "p_value": 0.9851369177470812,
+      "degrees_of_freedom": 166
+    },
+    "cohens_d_paired": 0.0014437433112756974,
+    "wilcoxon_p_value": 0.7932689265589196,
+    "fraction_docs_a_more_surprising": 0.5329341317365269
+  },
+  "outputs": {
+    "graphs_dir": "/home/kiwiparfait/Documents/ITBA/2026/Q2/NLP2026Q2/TPE/NLP-AI-Hallucinations/graphs/exp1",
+    "results_dir": "/home/kiwiparfait/Documents/ITBA/2026/Q2/NLP2026Q2/TPE/NLP-AI-Hallucinations/results/exp1",
+    "charts": [
+      "exp1_top_features.html",
+      "exp1_perplexity_boxplot.html",
+      "exp1_perplexity_paired_scatter.html",
+      "exp1_perplexity_delta_histogram.html"
+    ]
+  }
+}

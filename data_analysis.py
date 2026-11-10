@@ -35,7 +35,7 @@ df_all = pd.concat([df_train, df_val, df_test], ignore_index=True)
 df_vis_all = df_all[["lang"]].copy()
 
 # Concatenation for labeled data
-df_labeled = pd.concat([df_val, df_test], ignore_index=True)
+df_labeled = pd.concat([df_test], ignore_index=True)
 
 df_labeled["output_words"] = df_labeled["model_output_text"].str.split().str.len()
 df_labeled["has_hallucination"] = df_labeled["hard_labels"].apply(
