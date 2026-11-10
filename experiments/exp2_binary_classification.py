@@ -982,6 +982,7 @@ def build_length_distribution_chart(df: pd.DataFrame) -> alt.Chart:
 def build_confusion_matrix_chart(
     metrics: dict[str, Any],
     model_label: str,
+    title_prefix: str = "Exp. 2",
 ) -> alt.Chart:
     """Heatmap de la matriz de confusión."""
     cm = metrics["confusion_matrix"]
@@ -1033,7 +1034,7 @@ def build_confusion_matrix_chart(
     )
     return (heatmap + labels).properties(
         title=alt.TitleParams(
-            text=f"Exp. 2 — Matriz de confusión · {model_label}",
+            text=f"{title_prefix} — Matriz de confusión · {model_label}",
             subtitle=(
                 f"F1 macro={metrics['f1_macro']:.4f} · MCC={metrics['mcc']:.4f} · "
                 f"ROC-AUC={metrics['roc_auc']:.4f}"
@@ -1044,7 +1045,10 @@ def build_confusion_matrix_chart(
     )
 
 
-def build_model_comparison_chart(metrics_by_model: dict[str, dict[str, Any]]) -> alt.Chart:
+def build_model_comparison_chart(
+    metrics_by_model: dict[str, dict[str, Any]],
+    title_prefix: str = "Exp. 2",
+) -> alt.Chart:
     """Barras agrupadas comparando F1 macro, MCC y ROC-AUC."""
     records = []
     for model_label, metrics in metrics_by_model.items():
@@ -1082,7 +1086,7 @@ def build_model_comparison_chart(metrics_by_model: dict[str, dict[str, Any]]) ->
     )
     return (bars + text).properties(
         title=alt.TitleParams(
-            text="Exp. 2 — Baseline léxico vs. fine-tuning semántico",
+            text=f"{title_prefix} — Baseline léxico vs. fine-tuning semántico",
             subtitle="Test set balanceado; métricas principales: F1 macro y MCC",
         ),
         width=520,
@@ -1126,7 +1130,10 @@ def build_top_features_chart(top_features: pd.DataFrame) -> alt.Chart:
     )
 
 
-def build_probability_chart(prediction_frames: dict[str, pd.DataFrame]) -> alt.Chart:
+def build_probability_chart(
+    prediction_frames: dict[str, pd.DataFrame],
+    title_prefix: str = "Exp. 2",
+) -> alt.Chart:
     """Histograma de probabilidad predicha de alucinación por modelo."""
     frames = []
     for model_label, frame in prediction_frames.items():
@@ -1162,7 +1169,7 @@ def build_probability_chart(prediction_frames: dict[str, pd.DataFrame]) -> alt.C
         )
         .properties(
             title=alt.TitleParams(
-                text="Exp. 2 — Distribución de probabilidades predichas",
+                text=f"{title_prefix} — Distribución de probabilidades predichas",
                 subtitle="Un buen modelo separa las distribuciones verde y roja",
             ),
             width=620,
@@ -1173,7 +1180,10 @@ def build_probability_chart(prediction_frames: dict[str, pd.DataFrame]) -> alt.C
     )
 
 
-def build_training_curves_chart(training_log: pd.DataFrame) -> alt.Chart | None:
+def build_training_curves_chart(
+    training_log: pd.DataFrame,
+    title_prefix: str = "Exp. 2",
+) -> alt.Chart | None:
     """Curvas de F1 macro y MCC en validación por época."""
     if training_log.empty or "eval_f1_macro" not in training_log.columns:
         return None
@@ -1212,7 +1222,7 @@ def build_training_curves_chart(training_log: pd.DataFrame) -> alt.Chart | None:
             ],
         )
         .properties(
-            title="Exp. 2 — Evolución del transformer en validación",
+            title=f"{title_prefix} — Evolución del transformer en validación",
             width=480,
             height=300,
         )

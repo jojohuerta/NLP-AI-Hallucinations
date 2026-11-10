@@ -15,6 +15,7 @@ Los experimentos se pueden correr por separado: no dependen entre sí.
 experiments/
   exp1_lexical_perplexity.py       # Exp. 1: léxico + perplejidad
   exp2_binary_classification.py    # Exp. 2: clasificación binaria
+  exp2b_phantom_paired_control.py  # Exp. 2b: control de fuente, tema y longitud
   exp3_logical_consistency.py      # Exp. 3: entidades + LLM few-shot
 
 requirements-exp1.txt
@@ -24,11 +25,13 @@ requirements-exp3.txt
 graphs/                            # generado por los scripts (gitignored)
   exp1/
   exp2/
+  exp2b/
   exp3/
 
 results/                           # generado por los scripts (gitignored)
   exp1/
   exp2/
+  exp2b/
   exp3/
 
 data_analysis.py                   # EDA original del TP
@@ -230,6 +233,153 @@ Truncados        7/394 (1.8 %) con max_length = 256
 
 ---
 
+## Experimento 2b — Phantom pareado: control de fuente, tema y longitud
+
+**Script:** `experiments/exp2b_phantom_paired_control.py`
+
+Es la versión justa del Experimento 2. Usa **solo Phantom** para eliminar el
+confound fuente-etiqueta y construye **pares dentro de la misma
+`(query, context)`**: una respuesta limpia y una alucinada del mismo tema.
+
+Para no cambiar un confound por otro, aplica tres controles:
+
+1. **Tema:** los dos textos del par responden la misma pregunta con el mismo
+   contexto.
+2. **Longitud:** solo se conservan pares donde ambas respuestas tienen al menos
+   `--target-words` tokens (40 por defecto) y las dos se recortan exactamente a
+   esa cantidad. La longitud es idéntica dentro de cada par, no solo en
+   promedio.
+3. **Puntuación:** a los textos recortados se les quita la puntuación. Sin este
+   paso el recorte deja una pista trivial: la respuesta alucinada suele ser más
+   larga y al cortarla termina a mitad de oración, mientras que la limpia
+   termina en punto.
+
+También se descartan los pares con Jaccard ≥ `--max-jaccard` (0.98), porque si
+los dos textos son casi iguales la etiqueta es ambigua por construcción.
+
+El split es agrupado por `query` (`StratifiedGroupKFold`): los dos miembros de
+un par y todas las respuestas de una misma pregunta caen siempre en la misma
+partición.
+
+Compara:
+
+1. **TF-IDF + LogisticRegression** sobre el texto recortado.
+2. **DistilBERT** fine-tuneado sobre el texto recortado.
+3. **Umbral de longitud** (control trivial).
+4. **Query-only** (diagnóstico de fuga por tema).
+5. **Regla de puntuación** (diagnóstico del artefacto de recorte).
+
+Además reporta dos referencias para dimensionar cada confound:
+
+- **Sin control:** muestra balanceada de respuestas completas, sin parear.
+- **Tema controlado, longitud no:** los mismos pares con el texto completo.
+
+Métricas: F1 macro, F1 por clase, precisión, recall, MCC, ROC-AUC, PR-AUC y
+matriz de confusión. **No se calcula ni se reporta la métrica global de
+aciertos**, y no se usa `classification_report`.
+
+### Instalación
+
+Usa las mismas dependencias que el Experimento 2:
+
+```bash
+pip install -r requirements-exp2.txt
+```
+
+### Ejecución completa
+
+```bash
+python experiments/exp2b_phantom_paired_control.py
+```
+
+La primera corrida descarga Phantom y DistilBERT (~250 MB).
+
+### Smoke tests
+
+```bash
+# Solo baselines y controles, sin transformer
+python experiments/exp2b_phantom_paired_control.py --skip-transformer
+
+# Pocos pares y dos longitudes de sensibilidad
+python experiments/exp2b_phantom_paired_control.py \
+  --max-pairs 60 --skip-transformer --sensitivity-lengths "25,40"
+```
+
+### Opciones útiles
+
+```bash
+python experiments/exp2b_phantom_paired_control.py --help
+
+# Otro recorte de longitud (tokens por respuesta)
+python experiments/exp2b_phantom_paired_control.py --target-words 25
+
+# Ser más estricto con los pares casi idénticos
+python experiments/exp2b_phantom_paired_control.py --max-jaccard 0.95
+
+# Sin referencias de ablación (más rápido)
+python experiments/exp2b_phantom_paired_control.py --skip-reference
+```
+
+### Salidas
+
+```text
+graphs/exp2b/*.html
+results/exp2b/*.csv
+results/exp2b/*.json
+results/exp2b/transformer_checkpoints/   # gitignored
+```
+
+### Resultados de referencia
+
+Con `target_words = 40`, 324 pares (648 ejemplos): train 464, validación 92,
+test 92.
+
+```text
+Condición                        Modelo              F1 macro   MCC
+Sin control                      TF-IDF              0.8571     0.7160
+Sin control                      Umbral de longitud  0.9003     0.8187
+Tema controlado (texto completo) TF-IDF              0.6934     0.4535
+Tema controlado (texto completo) Umbral de longitud  0.6675     0.4154
+Tema + longitud (diseño final)   TF-IDF              0.5939     0.1995
+Tema + longitud (diseño final)   Umbral de longitud  0.3333     0.0000
+Tema + longitud (diseño final)   Query-only          0.3333     0.0000
+Tema + longitud (diseño final)   DistilBERT          0.6157     0.2835
+```
+
+Un predictor constante sobre un test balanceado obtiene F1 macro = 1/3 y
+MCC = 0, así que **0.3333 es el piso de azar** de estas tablas.
+
+Sensibilidad al recorte (solo TF-IDF):
+
+```text
+target_words   pares   F1 macro   MCC
+25             299     0.5204     0.0765
+40             324     0.5939     0.1995
+60             264     0.6878     0.3819
+```
+
+> **El artefacto que motivó el rediseño.** Un primer intento recortaba cada par
+> a `min(palabras_limpias, palabras_alucinadas)`. Como en 1.059 de 1.082 pares
+> la alucinación era más larga, el recorte la dejaba cortada a mitad de oración.
+> Una regla trivial —"si termina en punto, es limpia"— alcanzaba **F1 = 0.924**
+> y DistilBERT llegaba a 0.9415 explotando esa pista, no detectando
+> alucinaciones. El diseño actual conserva ese diagnóstico: sobre el recorte
+> ingenuo la regla de puntuación da **F1 = 0.9459** (el conjunto de pares del
+> diagnóstico difiere levemente del primer intento), mientras que sobre el texto
+> final cae a 0.3333. El gráfico `exp2b_artifact_diagnostic.html` compara ambos
+> mundos lado a lado.
+
+Lectura: al controlar fuente, tema, longitud y puntuación, el rendimiento cae
+de ~0.86 a ~0.60. Queda señal por encima del azar (TF-IDF 0.59, DistilBERT
+0.62), pero muy lejos del F1 casi perfecto del Experimento 2. La conclusión es
+que buena parte de ese 0.98 era separación de fuente, tema y verbosidad.
+
+Limitaciones: el test tiene 92 ejemplos (intervalos amplios), solo se conservan
+pares donde ambas respuestas son largas, y el recorte puede eliminar la cola
+donde aparece la alucinación. Todo queda registrado en `exp2b_summary.json`.
+
+---
+
 ## Experimento 3 — Consistencia lógica: entidades vs. LLM few-shot
 
 **Script:** `experiments/exp3_logical_consistency.py`
@@ -354,6 +504,7 @@ McNemar baseline vs. LLM: p = 1.0000
 |---|---|---|---|
 | 1 | `pip install -r requirements-exp1.txt` | `python experiments/exp1_lexical_perplexity.py` | `graphs/exp1/`, `results/exp1/` |
 | 2 | `pip install -r requirements-exp2.txt` | `python experiments/exp2_binary_classification.py` | `graphs/exp2/`, `results/exp2/` |
+| 2b | `pip install -r requirements-exp2.txt` | `python experiments/exp2b_phantom_paired_control.py` | `graphs/exp2b/`, `results/exp2b/` |
 | 3 | `pip install -r requirements-exp3.txt` | `python experiments/exp3_logical_consistency.py` | `graphs/exp3/`, `results/exp3/` |
 
 Cada script imprime al final la lista de archivos generados y acepta `--help`
