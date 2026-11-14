@@ -1,51 +1,54 @@
 # NLP-AI-Hallucinations
 
-Proyecto de Procesamiento del Lenguaje Natural (ITBA) sobre **detección de
-alucinaciones en modelos de lenguaje**.
+Trabajo práctico de Procesamiento del Lenguaje Natural (ITBA) sobre **detección
+de alucinaciones en modelos de lenguaje**.
 
-El repositorio contiene tres experimentos independientes. Cada uno es un script
-autocontenido, con semilla fija, métricas reproducibles y gráficos Altair.
-Los experimentos se pueden correr por separado: no dependen entre sí.
+El repositorio contiene cuatro experimentos independientes:
 
----
+| Experimento | Script | Enfoque |
+|---|---|---|
+| 1 | `exp1_lexical_perplexity.py` | Léxico (TF-IDF) y perplejidad (GPT-2) a nivel segmento |
+| 2 | `exp2_binary_classification.py` | Clasificación binaria Mu-SHROOM vs. Phantom |
+| 2b | `exp2b_phantom_paired_control.py` | Pares de Phantom con fuente, tema y longitud controlados |
+| 3 | `exp3_logical_consistency.py` | Entidades con spaCy vs. LLM few-shot |
 
-## Estructura
+Cada script es autocontenido (salvo 2b, que reutiliza helpers de 2), usa semilla
+fija y genera sus propios gráficos Altair y archivos de resultados. Los
+experimentos **no dependen entre sí** y se pueden correr en cualquier orden.
 
-```text
-experiments/
-  exp1_lexical_perplexity.py       # Exp. 1: léxico + perplejidad
-  exp2_binary_classification.py    # Exp. 2: clasificación binaria
-  exp2b_phantom_paired_control.py  # Exp. 2b: control de fuente, tema y longitud
-  exp3_logical_consistency.py      # Exp. 3: entidades + LLM few-shot
+Unos resultados numéricos de referencia se encuentran en **[Results.md](Results.md)**. 
+Este README describe únicamente requisitos, ejecución, estructura, datasets y metodología.
 
-requirements-exp1.txt
-requirements-exp2.txt
-requirements-exp3.txt
-
-graphs/                            # generado por los scripts (gitignored)
-  exp1/
-  exp2/
-  exp2b/
-  exp3/
-
-results/                           # generado por los scripts (gitignored)
-  exp1/
-  exp2/
-  exp2b/
-  exp3/
-
-data_analysis.py                   # EDA original del TP
-```
-
-Cada experimento escribe únicamente en su propio subdirectorio de `graphs/` y
-`results/`, así que se pueden ejecutar en cualquier orden.
+Los siguientes resultados de referencia fueron obtenidos utilizando una **GPU NVIDIA RTX 3080 Ti de 12 GB** con CUDA.
 
 ---
 
-## Requisitos generales
+## Índice
 
-Probado con **Python 3.12** y GPU NVIDIA (RTX 3080 Ti, 12 GB). Los experimentos
-1 y 3 pueden correr en CPU, aunque más lento.
+1. [Requisitos](#requisitos)
+2. [Cómo correr todos los experimentos](#cómo-correr-todos-los-experimentos)
+3. [Estructura del repositorio](#estructura-del-repositorio)
+4. [Datasets](#datasets)
+5. [Experimentos](#experimentos)
+6. [Gráficos y exportación](#gráficos-y-exportación)
+7. [Reproducibilidad](#reproducibilidad)
+8. [Solución de problemas](#solución-de-problemas)
+
+---
+
+## Requisitos
+
+### Hardware y sistema
+
+- **Python 3.12** (probado con esa versión).
+- Los cuatro experimentos pueden correr en CPU, aunque mucho más lento. El
+  Experimento 1 usa `--device cpu`; los experimentos 2, 2b y 3 aceptan `--cpu`.
+- Espacio en disco: varios GB para dependencias, datasets y modelos. El LLM del
+  Experimento 3 pesa ~6 GB, GPT-2 ~500 MB y DistilBERT ~250 MB.
+- Conexión a internet la primera vez: los datasets y modelos se descargan
+  automáticamente de HuggingFace.
+
+### Entorno virtual
 
 ```bash
 python3 -m venv .venv
@@ -53,7 +56,22 @@ source .venv/bin/activate
 python -m pip install --upgrade pip
 ```
 
-Después instalá las dependencias del experimento que quieras correr:
+### Dependencias por experimento
+
+Las dependencias están separadas en tres archivos `requirements-exp*.txt`. **No
+hay un `requirements.txt` único**: hay que instalar el archivo del experimento
+que se quiera correr.
+
+| Archivo | Sirve para | Incluye además |
+|---|---|---|
+| `requirements-exp1.txt` | Experimento 1 | `torch`, `transformers` (GPT-2) |
+| `requirements-exp2.txt` | Experimentos 2 y **2b** | `accelerate` (fine-tuning) |
+| `requirements-exp3.txt` | Experimento 3 | `accelerate`, `spacy` y el wheel de `en_core_web_sm` |
+
+Todos incluyen `datasets`, `pandas`, `numpy`, `altair`, `scikit-learn` y
+`scipy`.
+
+Para correr **todos** los experimentos, instalá los tres archivos:
 
 ```bash
 pip install -r requirements-exp1.txt
@@ -61,59 +79,275 @@ pip install -r requirements-exp2.txt
 pip install -r requirements-exp3.txt
 ```
 
-Los datasets se descargan automáticamente de HuggingFace la primera vez:
+O en un solo comando:
 
-- [Helsinki-NLP/mu-shroom](https://huggingface.co/datasets/Helsinki-NLP/mu-shroom)
-- [seyled/Phantom_Hallucination_Detection](https://huggingface.co/datasets/seyled/Phantom_Hallucination_Detection)
+```bash
+pip install -r requirements-exp1.txt -r requirements-exp2.txt -r requirements-exp3.txt
+```
 
-Si HuggingFace limita las descargas, definí un token:
+> **Experimento 2b:** usa `requirements-exp2.txt`. No tiene archivo propio
+> porque reutiliza el pipeline, las métricas y los gráficos del Experimento 2.
+
+> **Exportar gráficos a PNG (opcional):** requiere `vl-convert-python`, que está
+> comentado en los tres requirements:
+>
+> ```bash
+> pip install vl-convert-python
+> ```
+
+### Modelos de spaCy
+
+`requirements-exp3.txt` intenta instalar `en_core_web_sm` desde un wheel de
+GitHub. Si esa instalación falla, ejecutá:
+
+```bash
+python -m spacy download en_core_web_sm
+```
+
+### Token de HuggingFace
+
+Los datasets usados son públicos y no requieren token. El token solo hace falta
+si HuggingFace limita las descargas o si se usa un modelo *gated* (por ejemplo,
+Gemma):
 
 ```bash
 export HF_TOKEN="hf_..."
-# o: huggingface-cli login
+# alternativa: huggingface-cli login
 ```
+
+### Verificación rápida de PyTorch y GPU
+
+```bash
+python test_pytorch.py
+```
+
+Imprime la versión de PyTorch y, si hay CUDA disponible, el nombre de la GPU.
 
 ---
 
-## Experimento 1 — Análisis léxico y de perplejidad
+## Cómo correr todos los experimentos
 
-**Script:** `experiments/exp1_lexical_perplexity.py`
-
-Compara, dentro de las respuestas de **Mu-SHROOM** (configuración `en`), los
-segmentos marcados como alucinación contra los segmentos veraces:
-
-1. **Léxico:** TF-IDF + LogisticRegression sobre segmentos, con split agrupado
-   por documento para evitar leakage y bootstrap agrupado para los coeficientes.
-2. **Perplejidad:** GPT-2 sobre el texto original; se calcula la NLL solamente
-   sobre los tokens que caen dentro y fuera de los spans alucinados, y se aplica
-   un t-test apareado a nivel documento.
-
-### Instalación
-
-```bash
-pip install -r requirements-exp1.txt
-```
-
-### Ejecución completa
+Con el entorno activado y las dependencias instaladas, desde la raíz del
+repositorio:
 
 ```bash
 python experiments/exp1_lexical_perplexity.py
+python experiments/exp2_binary_classification.py
+python experiments/exp2b_phantom_paired_control.py
+python experiments/exp3_logical_consistency.py
 ```
 
-La primera corrida descarga Mu-SHROOM y GPT-2 (~500 MB).
+La primera corrida descarga los datasets y los modelos. El Experimento 2b
+importa funciones de `exp2_binary_classification.py`, así que ambos archivos
+deben estar juntos en `experiments/`; no hace falta correr el 2 antes que el 2b.
 
-### Smoke tests
+### Resumen de ejecución
+
+| Experimento | Instalar | Correr | Salidas |
+|---|---|---|---|
+| 1 | `pip install -r requirements-exp1.txt` | `python experiments/exp1_lexical_perplexity.py` | `graphs/exp1/`, `results/exp1/` |
+| 2 | `pip install -r requirements-exp2.txt` | `python experiments/exp2_binary_classification.py` | `graphs/exp2/`, `results/exp2/` |
+| 2b | `pip install -r requirements-exp2.txt` | `python experiments/exp2b_phantom_paired_control.py` | `graphs/exp2b/`, `results/exp2b/` |
+| 3 | `pip install -r requirements-exp3.txt` | `python experiments/exp3_logical_consistency.py` | `graphs/exp3/`, `results/exp3/` |
+
+Cada script imprime al final la lista de archivos generados. Todos aceptan
+`--help` con la lista completa de opciones.
+
+### Corridas rápidas de verificación
+
+Sirven para comprobar que la instalación funciona sin descargar los modelos más
+grandes:
 
 ```bash
-# Solo la parte léxica (no descarga GPT-2)
-python experiments/exp1_lexical_perplexity.py --skip-perplexity
+# Experimento 1: solo parte léxica, sin GPT-2
+python experiments/exp1_lexical_perplexity.py --skip-perplexity --max-examples 20
 
-# Pocos documentos
-python experiments/exp1_lexical_perplexity.py \
-  --max-examples 20 --skip-perplexity
+# Experimento 2: solo baseline léxico, sin DistilBERT
+python experiments/exp2_binary_classification.py --skip-transformer --max-per-class 20 --epochs 1
+
+# Experimento 2b: solo baselines y controles, sin DistilBERT
+python experiments/exp2b_phantom_paired_control.py --skip-transformer --max-pairs 60
+
+# Experimento 3: solo entidades y control de longitud, sin LLM
+python experiments/exp3_logical_consistency.py --skip-llm --n-per-class 20
 ```
 
-### Opciones útiles
+### Directorios de salida personalizados
+
+Los cuatro scripts aceptan `--graphs-dir` y `--results-dir` para redirigir las
+salidas. Los tres que usan HuggingFace aceptan además `--cache-dir` para cambiar
+la caché de datasets:
+
+```bash
+python experiments/exp1_lexical_perplexity.py \
+  --graphs-dir /tmp/graficos --results-dir /tmp/resultados --cache-dir /tmp/hf-cache
+```
+
+### Análisis exploratorio original
+
+`data_analysis.py` es el EDA original del TP (no forma parte de los cuatro
+experimentos). Genera cuatro gráficos en `graphs/`:
+
+```bash
+python data_analysis.py
+```
+
+Requiere las mismas dependencias que el Experimento 1.
+
+---
+
+## Estructura del repositorio
+
+```text
+.
+├── experiments/
+│   ├── exp1_lexical_perplexity.py        # Exp. 1: léxico + perplejidad
+│   ├── exp2_binary_classification.py     # Exp. 2: clasificación binaria
+│   ├── exp2b_phantom_paired_control.py   # Exp. 2b: pares con controles
+│   └── exp3_logical_consistency.py       # Exp. 3: entidades + LLM few-shot
+│
+├── requirements-exp1.txt                 # Dependencias del Exp. 1
+├── requirements-exp2.txt                 # Dependencias de Exp. 2 y 2b
+├── requirements-exp3.txt                 # Dependencias del Exp. 3
+│
+├── data_analysis.py                      # EDA original del TP
+├── test_pytorch.py                       # Chequeo de PyTorch/CUDA
+│
+├── graphs/                               # Generado por los scripts (gitignored)
+│   ├── chart_*.html                      # EDA original
+│   ├── exp1/
+│   ├── exp2/
+│   ├── exp2b/
+│   └── exp3/
+│
+├── results/                              # Generado por los scripts (gitignored)
+│   ├── exp1/
+│   ├── exp2/
+│   ├── exp2b/
+│   └── exp3/
+│
+├── README.md
+└── Results.md                            # Resultados de la corrida de referencia
+```
+
+Cada experimento escribe únicamente en su propio subdirectorio de `graphs/` y
+`results/`. Los datasets **no se guardan en el repositorio**: se descargan a la
+caché de HuggingFace (`~/.cache/huggingface` por defecto).
+
+`graphs/` y `results/` están en `.gitignore`, al igual que los CSV, los
+checkpoints grandes y los entornos virtuales. Se pueden regenerar corriendo los
+scripts.
+
+---
+
+## Datasets
+
+Los experimentos usan dos datasets públicos de HuggingFace.
+
+### Mu-SHROOM
+
+- **Nombre:** [`Helsinki-NLP/mu-shroom`](https://huggingface.co/datasets/Helsinki-NLP/mu-shroom)
+- **Configuración usada:** `en` (inglés)
+- **Splits de la configuración `en`:**
+  - `train_unlabeled`: 809 documentos sin etiquetas de spans.
+  - `validation`: 50 documentos etiquetados.
+  - `test`: 154 documentos etiquetados.
+- Los experimentos usan `validation + test` = **204 documentos etiquetados**.
+  197 de ellos tienen al menos un span de alucinación.
+
+**Columnas principales:**
+
+| Columna | Contenido |
+|---|---|
+| `id` | Identificador del documento |
+| `lang` | Idioma (`EN` en la configuración usada) |
+| `model_input` | Pregunta o instrucción dada al modelo |
+| `model_output_text` | Respuesta generada por el modelo |
+| `model_id` | Modelo que generó la respuesta |
+| `wikipedia_url` | Artículo de referencia |
+| `soft_labels` | Etiquetas suaves por token/carácter con probabilidad |
+| `hard_labels` | Lista de spans `[start, end)` a nivel **carácter** marcados como alucinación |
+| `model_output_logits` | Logits del modelo generador |
+| `model_output_tokens` | Tokens del texto generado |
+| `annotations` | Anotaciones individuales de cada anotador |
+
+**Uso en los experimentos:**
+
+- **Exp. 1:** los `hard_labels` permiten separar cada respuesta en segmentos
+  alucinados (Corpus A) y veraces (Corpus B).
+- **Exp. 2:** los documentos con al menos un span se usan como **positivos**.
+
+### Phantom Hallucination Detection
+
+- **Nombre:** [`seyled/Phantom_Hallucination_Detection`](https://huggingface.co/datasets/seyled/Phantom_Hallucination_Detection)
+- **Split:** `train` (único), **30.886 filas**.
+- **Balance:** 15.443 filas con `ground_truth_label == "hallucination"` y 15.443
+  con `"not hallucination"`.
+
+**Columnas:**
+
+| Columna | Contenido |
+|---|---|
+| `Unnamed: 0` | Índice original de la fila |
+| `query` | Pregunta |
+| `context` | Documento de contexto (fragmento de un filing financiero, ~miles de palabras) |
+| `answer` | Respuesta generada |
+| `ground_truth_label` | `"hallucination"` o `"not hallucination"` |
+
+**Características relevantes:**
+
+- Está construido con **pares**: para cada `(query, context)` hay exactamente una
+  respuesta limpia y una alucinada. Hay 15.443 pares de este tipo. Esto permite
+  controlar el tema en el Experimento 2b.
+- Las respuestas se repiten mucho entre preguntas, por eso los scripts
+  deduplican por texto normalizado antes de muestrear.
+- Hay un **confound de longitud fuerte**: en el dataset completo, la mediana de
+  palabras es **25** para respuestas limpias y **67** para alucinadas. Los
+  experimentos lo reportan y lo controlan explícitamente.
+
+**Uso en los experimentos:**
+
+- **Exp. 2:** las respuestas `"not hallucination"` se usan como **negativos**.
+- **Exp. 2b:** se forman pares limpio/alucinado de la misma `(query, context)`.
+- **Exp. 3:** se muestrea un subconjunto balanceado de 100 + 100 respuestas.
+
+### Datasets construidos por experimento
+
+| Experimento | Construcción | Tamaño de la corrida de referencia |
+|---|---|---|
+| 1 | Segmentos A (alucinados) y B (veraces) extraídos de Mu-SHROOM | 609 segmentos A + 599 B; 797 usados en TF-IDF |
+| 2 | 197 positivos de Mu-SHROOM + 197 negativos únicos de Phantom | 394 ejemplos balanceados 50/50 |
+| 2b | Pares limpio/alucinado de Phantom, mismo tema, misma longitud y sin puntuación | 324 pares = 648 ejemplos |
+| 3 | Muestra balanceada de Phantom, deduplicada por `(query, context, answer)` | 200 ejemplos (100 + 100) |
+
+---
+
+## Experimentos
+
+### Experimento 1 — Análisis léxico y de perplejidad
+
+**Script:** `experiments/exp1_lexical_perplexity.py`
+
+Compara, dentro de las respuestas de Mu-SHROOM, los segmentos alucinados contra
+los veraces desde dos perspectivas:
+
+1. **Léxico:** TF-IDF + LogisticRegression sobre segmentos. El split es agrupado
+   por documento (`GroupShuffleSplit` por `doc_id`) para evitar leakage, y los
+   coeficientes se estiman con bootstrap agrupado por documento.
+2. **Perplejidad:** GPT-2 calcula la NLL sobre el texto original completo. La NLL
+   se separa según si cada token cae dentro o fuera de un span alucinado, y se
+   aplica un t-test apareado a nivel documento.
+
+Decisiones metodológicas:
+
+- Los offsets de `hard_labels` son `[start, end)` a nivel carácter.
+- Los spans se normalizan (clamp, orden, merge de solapamientos y adyacencias).
+- Un token se asigna al Corpus A si al menos el 50 % de sus caracteres cae
+  dentro de un span alucinado; si no, va al Corpus B.
+- Se descartan tokens sin caracteres alfanuméricos.
+- La perplejidad usa el contexto original, no un texto aislado.
+
+Opciones útiles:
 
 ```bash
 python experiments/exp1_lexical_perplexity.py --help
@@ -123,76 +357,66 @@ python experiments/exp1_lexical_perplexity.py --lm gpt2-medium
 
 # Forzar CPU
 python experiments/exp1_lexical_perplexity.py --device cpu
+
+# Elegir splits de Mu-SHROOM
+python experiments/exp1_lexical_perplexity.py --splits validation test
+
+# Menos remuestreos bootstrap
+python experiments/exp1_lexical_perplexity.py --bootstrap 100
 ```
 
-### Salidas
+Salidas:
 
 ```text
-graphs/exp1/*.html
-results/exp1/*.csv
-results/exp1/*.json
-```
+graphs/exp1/
+  exp1_top_features.html
+  exp1_perplexity_boxplot.html
+  exp1_perplexity_paired_scatter.html
+  exp1_perplexity_delta_histogram.html
 
-### Resultados de referencia
-
-Con la configuración por defecto (204 documentos, 609 spans A y 599 spans B):
-
-```text
-TF-IDF + LogReg        F1 macro = 0.6491
-t-test de coeficientes p = 4.73e-4
-GPT-2 perplexity       A = 49.81  vs.  B = 49.70
-t-test apareado        p = 0.985 (no significativo)
+results/exp1/
+  exp1_segments.csv
+  exp1_top_features.csv
+  exp1_perplexity_per_document.csv
+  exp1_summary.json
 ```
 
 ---
 
-## Experimento 2 — Clasificación binaria
+### Experimento 2 — Clasificación binaria
 
 **Script:** `experiments/exp2_binary_classification.py`
 
-Construye un dataset balanceado 50/50:
+Construye un dataset balanceado 50/50 combinando dos fuentes:
 
-- **Positivos:** todos los documentos ingleses de **Mu-SHROOM**
-  (`validation + test`) con al menos un span en `hard_labels` → 197 ejemplos.
-- **Negativos:** 197 respuestas únicas de **Phantom** con
-  `ground_truth_label == "not hallucination"`. Phantom se deduplica antes de
-  muestrear porque repite muchísimo la misma respuesta.
+- **Positivos:** todos los documentos ingleses de Mu-SHROOM
+  (`validation + test`) con al menos un span en `hard_labels`.
+- **Negativos:** respuestas únicas de Phantom con
+  `ground_truth_label == "not hallucination"`. Phantom se deduplica por texto
+  normalizado antes de muestrear porque repite muchísimo la misma respuesta.
 
 Compara:
 
 1. Baseline léxico: **TF-IDF + LogisticRegression**.
-2. Fine-tuning semántico: **DistilBERT**.
+2. Fine-tuning semántico: **DistilBERT** (`distilbert-base-uncased` por defecto).
+
+El split es estratificado 70/15/15. El baseline y el transformer usan
+exactamente el mismo train y el mismo test; la validación se usa para elegir la
+mejor época.
 
 Métricas: F1 macro, F1 por clase, precisión, recall, MCC, ROC-AUC, PR-AUC y
 matriz de confusión. **No se calcula ni se reporta la métrica global de
 aciertos**, y no se usa `classification_report`.
 
-### Instalación
+> **Advertencia metodológica:** en este diseño la etiqueta está perfectamente
+> confundida con la fuente (positivos = Mu-SHROOM, negativos = Phantom). Un F1
+> alto puede reflejar separación de tema, estilo o longitud, no detección
+> genuina de alucinaciones. El script imprime esta advertencia, exporta los
+> términos más asociados a cada fuente y guarda la limitación en
+> `exp2_summary.json`. El Experimento 2b está diseñado justamente para eliminar
+> ese confound.
 
-```bash
-pip install -r requirements-exp2.txt
-```
-
-### Ejecución completa
-
-```bash
-python experiments/exp2_binary_classification.py
-```
-
-La primera corrida descarga Mu-SHROOM, Phantom y DistilBERT (~250 MB).
-
-### Smoke tests
-
-```bash
-# Solo baseline, sin transformer
-python experiments/exp2_binary_classification.py --skip-transformer
-
-# Pocos ejemplos y una época
-python experiments/exp2_binary_classification.py \
-  --max-per-class 20 --epochs 1 --batch-size 8
-```
-
-### Opciones útiles
+Opciones útiles:
 
 ```bash
 python experiments/exp2_binary_classification.py --help
@@ -205,59 +429,65 @@ python experiments/exp2_binary_classification.py --fp16
 
 # Guardar el modelo fine-tuneado
 python experiments/exp2_binary_classification.py --save-model
+
+# Forzar CPU
+python experiments/exp2_binary_classification.py --cpu
 ```
 
-### Salidas
+Salidas:
 
 ```text
-graphs/exp2/*.html
-results/exp2/*.csv
-results/exp2/*.json
-results/exp2/transformer_checkpoints/   # ~257 MB, gitignored
+graphs/exp2/
+  exp2_class_balance.html
+  exp2_answer_length_distribution.html
+  exp2_baseline_top_features.html
+  exp2_confusion_baseline.html
+  exp2_confusion_transformer.html
+  exp2_transformer_training_curves.html
+  exp2_model_comparison.html
+  exp2_probability_distribution.html
+
+results/exp2/
+  exp2_balanced_dataset.csv
+  exp2_baseline_metrics.json
+  exp2_baseline_predictions.csv
+  exp2_baseline_predictions_validation.csv
+  exp2_baseline_top_features.csv
+  exp2_transformer_metrics.json
+  exp2_transformer_predictions.csv
+  exp2_transformer_training_log.csv
+  exp2_metrics_comparison.csv
+  exp2_summary.json
+  transformer_checkpoints/            # si se entrena el transformer
 ```
-
-### Resultados de referencia
-
-```text
-TF-IDF + LogReg   F1 macro = 0.9833   MCC = 0.9672
-DistilBERT        F1 macro = 1.0000   MCC = 1.0000
-Truncados        7/394 (1.8 %) con max_length = 256
-```
-
-> **Advertencia metodológica:** en este diseño la etiqueta está perfectamente
-> confundida con la fuente (positivos = Mu-SHROOM, negativos = Phantom). Un F1
-> casi perfecto puede reflejar separación de tema, estilo o longitud, no
-> detección genuina de alucinaciones. El script imprime esta advertencia,
-> exporta los términos más asociados a cada fuente (`exp2_baseline_top_features.html`)
-> y guarda la limitación en `exp2_summary.json`.
 
 ---
 
-## Experimento 2b — Phantom pareado: control de fuente, tema y longitud
+### Experimento 2b — Phantom pareado: control de fuente, tema y longitud
 
 **Script:** `experiments/exp2b_phantom_paired_control.py`
 
-Es la versión justa del Experimento 2. Usa **solo Phantom** para eliminar el
-confound fuente-etiqueta y construye **pares dentro de la misma
+Es la versión controlada del Experimento 2. Usa **solo Phantom** para eliminar
+el confound fuente-etiqueta y construye **pares dentro de la misma
 `(query, context)`**: una respuesta limpia y una alucinada del mismo tema.
 
-Para no cambiar un confound por otro, aplica tres controles:
+Controles aplicados:
 
-1. **Tema:** los dos textos del par responden la misma pregunta con el mismo
+1. **Fuente:** todas las filas vienen de Phantom.
+2. **Tema:** los dos textos del par responden la misma pregunta con el mismo
    contexto.
-2. **Longitud:** solo se conservan pares donde ambas respuestas tienen al menos
+3. **Longitud:** solo se conservan pares donde ambas respuestas tienen al menos
    `--target-words` tokens (40 por defecto) y las dos se recortan exactamente a
-   esa cantidad. La longitud es idéntica dentro de cada par, no solo en
-   promedio.
-3. **Puntuación:** a los textos recortados se les quita la puntuación. Sin este
+   esa cantidad. La longitud es idéntica dentro de cada par.
+4. **Puntuación:** a los textos recortados se les quita la puntuación. Sin este
    paso el recorte deja una pista trivial: la respuesta alucinada suele ser más
    larga y al cortarla termina a mitad de oración, mientras que la limpia
    termina en punto.
+5. **Duplicados:** se descartan los pares con Jaccard ≥ `--max-jaccard` (0.98),
+   porque si los dos textos son casi iguales la etiqueta es ambigua por
+   construcción.
 
-También se descartan los pares con Jaccard ≥ `--max-jaccard` (0.98), porque si
-los dos textos son casi iguales la etiqueta es ambigua por construcción.
-
-El split es agrupado por `query` (`StratifiedGroupKFold`): los dos miembros de
+El split es agrupado por `query` con `StratifiedGroupKFold`: los dos miembros de
 un par y todas las respuestas de una misma pregunta caen siempre en la misma
 partición.
 
@@ -274,38 +504,14 @@ Además reporta dos referencias para dimensionar cada confound:
 - **Sin control:** muestra balanceada de respuestas completas, sin parear.
 - **Tema controlado, longitud no:** los mismos pares con el texto completo.
 
+También incluye un análisis de sensibilidad a la longitud de recorte
+(`--sensitivity-lengths`, por defecto `25,40,60`).
+
 Métricas: F1 macro, F1 por clase, precisión, recall, MCC, ROC-AUC, PR-AUC y
 matriz de confusión. **No se calcula ni se reporta la métrica global de
-aciertos**, y no se usa `classification_report`.
+aciertos.**
 
-### Instalación
-
-Usa las mismas dependencias que el Experimento 2:
-
-```bash
-pip install -r requirements-exp2.txt
-```
-
-### Ejecución completa
-
-```bash
-python experiments/exp2b_phantom_paired_control.py
-```
-
-La primera corrida descarga Phantom y DistilBERT (~250 MB).
-
-### Smoke tests
-
-```bash
-# Solo baselines y controles, sin transformer
-python experiments/exp2b_phantom_paired_control.py --skip-transformer
-
-# Pocos pares y dos longitudes de sensibilidad
-python experiments/exp2b_phantom_paired_control.py \
-  --max-pairs 60 --skip-transformer --sensitivity-lengths "25,40"
-```
-
-### Opciones útiles
+Opciones útiles:
 
 ```bash
 python experiments/exp2b_phantom_paired_control.py --help
@@ -318,128 +524,88 @@ python experiments/exp2b_phantom_paired_control.py --max-jaccard 0.95
 
 # Sin referencias de ablación (más rápido)
 python experiments/exp2b_phantom_paired_control.py --skip-reference
+
+# Otra grilla de sensibilidad
+python experiments/exp2b_phantom_paired_control.py --sensitivity-lengths "30,50"
 ```
 
-### Salidas
+Salidas:
 
 ```text
-graphs/exp2b/*.html
-results/exp2b/*.csv
-results/exp2b/*.json
-results/exp2b/transformer_checkpoints/   # gitignored
+graphs/exp2b/
+  exp2b_split_balance.html
+  exp2b_length_control.html
+  exp2b_pair_overlap.html
+  exp2b_top_features.html
+  exp2b_confusion_baseline.html
+  exp2b_confusion_transformer.html
+  exp2b_transformer_training_curves.html
+  exp2b_model_comparison.html
+  exp2b_probability_distribution.html
+  exp2b_artifact_diagnostic.html
+  exp2b_control_ablation.html
+
+results/exp2b/
+  exp2b_balanced_pairs.csv
+  exp2b_pair_diagnostics.csv
+  exp2b_baseline_predictions.csv
+  exp2b_baseline_predictions_validation.csv
+  exp2b_transformer_predictions.csv
+  exp2b_transformer_training_log.csv
+  exp2b_length_control_predictions.csv
+  exp2b_query_only_predictions.csv
+  exp2b_metrics.csv
+  exp2b_control_ablation.csv
+  exp2b_artifact_diagnostic.csv
+  exp2b_length_sensitivity.csv
+  exp2b_top_features.csv
+  exp2b_summary.json
+  transformer_checkpoints/            # si se entrena el transformer
 ```
-
-### Resultados de referencia
-
-Con `target_words = 40`, 324 pares (648 ejemplos): train 464, validación 92,
-test 92.
-
-```text
-Condición                        Modelo              F1 macro   MCC
-Sin control                      TF-IDF              0.8571     0.7160
-Sin control                      Umbral de longitud  0.9003     0.8187
-Tema controlado (texto completo) TF-IDF              0.6934     0.4535
-Tema controlado (texto completo) Umbral de longitud  0.6675     0.4154
-Tema + longitud (diseño final)   TF-IDF              0.5939     0.1995
-Tema + longitud (diseño final)   Umbral de longitud  0.3333     0.0000
-Tema + longitud (diseño final)   Query-only          0.3333     0.0000
-Tema + longitud (diseño final)   DistilBERT          0.6157     0.2835
-```
-
-Un predictor constante sobre un test balanceado obtiene F1 macro = 1/3 y
-MCC = 0, así que **0.3333 es el piso de azar** de estas tablas.
-
-Sensibilidad al recorte (solo TF-IDF):
-
-```text
-target_words   pares   F1 macro   MCC
-25             299     0.5204     0.0765
-40             324     0.5939     0.1995
-60             264     0.6878     0.3819
-```
-
-> **El artefacto que motivó el rediseño.** Un primer intento recortaba cada par
-> a `min(palabras_limpias, palabras_alucinadas)`. Como en 1.059 de 1.082 pares
-> la alucinación era más larga, el recorte la dejaba cortada a mitad de oración.
-> Una regla trivial —"si termina en punto, es limpia"— alcanzaba **F1 = 0.924**
-> y DistilBERT llegaba a 0.9415 explotando esa pista, no detectando
-> alucinaciones. El diseño actual conserva ese diagnóstico: sobre el recorte
-> ingenuo la regla de puntuación da **F1 = 0.9459** (el conjunto de pares del
-> diagnóstico difiere levemente del primer intento), mientras que sobre el texto
-> final cae a 0.3333. El gráfico `exp2b_artifact_diagnostic.html` compara ambos
-> mundos lado a lado.
-
-Lectura: al controlar fuente, tema, longitud y puntuación, el rendimiento cae
-de ~0.86 a ~0.60. Queda señal por encima del azar (TF-IDF 0.59, DistilBERT
-0.62), pero muy lejos del F1 casi perfecto del Experimento 2. La conclusión es
-que buena parte de ese 0.98 era separación de fuente, tema y verbosidad.
-
-Limitaciones: el test tiene 92 ejemplos (intervalos amplios), solo se conservan
-pares donde ambas respuestas son largas, y el recorte puede eliminar la cola
-donde aparece la alucinación. Todo queda registrado en `exp2b_summary.json`.
 
 ---
 
-## Experimento 3 — Consistencia lógica: entidades vs. LLM few-shot
+### Experimento 3 — Consistencia lógica: entidades vs. LLM few-shot
 
 **Script:** `experiments/exp3_logical_consistency.py`
 
-Sobre una muestra balanceada de **Phantom** (100 alucinaciones + 100 respuestas
+Sobre una muestra balanceada de Phantom (100 alucinaciones + 100 respuestas
 limpias = 200 filas), compara:
 
 1. **Baseline de entidades con spaCy:** extrae entidades de la `query` y del
    `context` con `en_core_web_sm`, calcula qué fracción de las entidades de la
    respuesta no está respaldada por la evidencia y elige un umbral heurístico
    **solo en desarrollo**.
-2. **LLM few-shot:** un modelo instruct recibe `query`, un contexto recuperado
-   y `answer`, junto con 4 ejemplos etiquetados, y responde `HALLUCINATION` o
+2. **LLM few-shot:** un modelo instruct recibe `query`, un contexto recuperado y
+   `answer`, junto con 4 ejemplos etiquetados, y responde `HALLUCINATION` o
    `CLEAN`.
 3. **Control de longitud:** un umbral sobre la cantidad de palabras de la
    respuesta. No es un método propuesto; sirve para dimensionar el confound.
 
 Métricas: F1 macro, F1 de alucinación, precisión y recall por clase, MCC,
-matriz de confusión, IC bootstrap al 95 % y test de McNemar entre baseline y LLM.
+matriz de confusión, IC bootstrap al 95 % y test de McNemar entre baseline y
+LLM.
 
 Decisiones de diseño:
 
 - Split **50/25/25** (desarrollo/validación/test) agrupado por `query` con
-  `StratifiedGroupKFold`. Phantom tiene pares de respuestas (limpia/alucinada)
-  para la misma pregunta y contexto; agrupar evita leakage entre particiones.
-- El modelo por defecto es `Qwen/Qwen2.5-3B-Instruct` (no gated, ~6 GB en
-  bf16). Se puede cambiar con `--model`.
+  `StratifiedGroupKFold`.
+- La muestra se deduplica por la terna `(query, context, answer)` antes de
+  muestrear.
+- El umbral del baseline se elige solo en desarrollo.
+- El LLM no se entrena: los ejemplos few-shot salen de desarrollo.
+- El modelo por defecto es `Qwen/Qwen2.5-3B-Instruct` (no gated, ~6 GB en bf16).
 - El contexto que recibe el LLM se recupera con TF-IDF sobre las oraciones del
   contexto, para no truncar arbitrariamente un documento de ~9.000 palabras.
 
-### Instalación
+> **Advertencia metodológica:** las respuestas alucinadas de Phantom son
+> sistemáticamente más largas que las limpias. El control de longitud es una
+> referencia trivial que puede igualar o superar a los métodos evaluados, así
+> que el resultado debe interpretarse como separabilidad
+> superficial/verbosidad, no como detección semántica genuina. El gráfico
+> `exp3_score_vs_length.html` visualiza este confound.
 
-```bash
-pip install -r requirements-exp3.txt
-
-# Si la rueda del modelo de spaCy no se instaló:
-python -m spacy download en_core_web_sm
-```
-
-### Ejecución completa
-
-```bash
-python experiments/exp3_logical_consistency.py
-```
-
-La primera corrida descarga Phantom y el LLM (~6 GB). En una RTX 3080 Ti tardó
-aproximadamente 4 minutos en total (la mayor parte, extracción de entidades).
-
-### Smoke tests
-
-```bash
-# Solo baseline de entidades + control de longitud (sin descargar LLM)
-python experiments/exp3_logical_consistency.py --skip-llm
-
-# Muestra chica, sin LLM
-python experiments/exp3_logical_consistency.py \
-  --n-per-class 20 --skip-llm
-```
-
-### Opciones útiles
+Opciones útiles:
 
 ```bash
 python experiments/exp3_logical_consistency.py --help
@@ -459,78 +625,56 @@ python experiments/exp3_logical_consistency.py \
 # Si la GPU se queda sin memoria
 python experiments/exp3_logical_consistency.py \
   --batch-size 1 --max-input-tokens 3072
+
+# Forzar CPU (muy lento)
+python experiments/exp3_logical_consistency.py --cpu
 ```
 
-### Salidas
+Salidas:
 
 ```text
-graphs/exp3/*.html
+graphs/exp3/
+  exp3_split_balance.html
+  exp3_answer_length_distribution.html
+  exp3_entity_grounding.html
+  exp3_threshold_curve.html
+  exp3_confusion_baseline.html
+  exp3_confusion_llm.html
+  exp3_model_comparison.html
+  exp3_score_vs_length.html
+  exp3_entity_variants.html
 
-results/exp3/exp3_sample.csv
-results/exp3/exp3_predictions_test.csv
-results/exp3/exp3_predictions_validation.csv
-results/exp3/exp3_metrics.csv
-results/exp3/exp3_threshold_search.csv
-results/exp3/exp3_length_threshold_search.csv
-results/exp3/exp3_entity_variants.csv
-results/exp3/exp3_llm_raw_predictions.csv
-results/exp3/exp3_errors.csv
-results/exp3/exp3_summary.json
+results/exp3/
+  exp3_sample.csv
+  exp3_predictions_test.csv
+  exp3_predictions_validation.csv
+  exp3_metrics.csv
+  exp3_threshold_search.csv
+  exp3_length_threshold_search.csv
+  exp3_entity_variants.csv
+  exp3_llm_raw_predictions.csv
+  exp3_llm_few_shot_examples.csv
+  exp3_errors.csv
+  exp3_summary.json
 ```
-
-### Resultados de referencia
-
-Split: 100 dev / 50 validación / 50 test (25 + 25 en test).
-
-```text
-Entidades (baseline)   F1 macro = 0.6528   MCC = 0.4345
-LLM few-shot           F1 macro = 0.6753   MCC = 0.3708
-Control de longitud    F1 macro = 0.8397   MCC = 0.6822
-McNemar baseline vs. LLM: p = 1.0000
-```
-
-> **Advertencia metodológica:** las respuestas alucinadas de Phantom son
-> sistemáticamente más largas que las limpias (mediana 71 vs. 24 palabras en
-> la muestra). El control de longitud supera a ambos métodos, así que el
-> resultado debe interpretarse como **separabilidad superficial/verbosidad**,
-> no como detección semántica genuina. El script reporta esta limitación y el
-> gráfico `exp3_score_vs_length.html` la visualiza.
-
----
-
-## Ejecución individual: resumen
-
-| Experimento | Instalar | Correr | Salidas |
-|---|---|---|---|
-| 1 | `pip install -r requirements-exp1.txt` | `python experiments/exp1_lexical_perplexity.py` | `graphs/exp1/`, `results/exp1/` |
-| 2 | `pip install -r requirements-exp2.txt` | `python experiments/exp2_binary_classification.py` | `graphs/exp2/`, `results/exp2/` |
-| 2b | `pip install -r requirements-exp2.txt` | `python experiments/exp2b_phantom_paired_control.py` | `graphs/exp2b/`, `results/exp2b/` |
-| 3 | `pip install -r requirements-exp3.txt` | `python experiments/exp3_logical_consistency.py` | `graphs/exp3/`, `results/exp3/` |
-
-Cada script imprime al final la lista de archivos generados y acepta `--help`
-con todas sus opciones.
 
 ---
 
 ## Gráficos y exportación
 
-Los gráficos se guardan como HTML interactivo de Altair y se abren directo en
-el navegador:
+Los gráficos se guardan como HTML interactivo de Altair y se abren directo en el
+navegador:
 
 ```bash
 xdg-open graphs/exp3/exp3_model_comparison.html
 ```
 
-Para exportar también PNG:
+Para exportar también PNG, instalá `vl-convert-python` y agregá `--save-png`:
 
 ```bash
 pip install vl-convert-python
 python experiments/exp3_logical_consistency.py --save-png
 ```
-
-Los directorios `graphs/` y `results/` están en `.gitignore`, igual que los
-`.csv` y los checkpoints grandes. Los scripts se pueden volver a correr en
-cualquier momento para regenerarlos.
 
 ---
 
@@ -538,11 +682,13 @@ cualquier momento para regenerarlos.
 
 - Todos los scripts usan `--seed 42` por defecto.
 - Los splits, muestreos y remuestreos bootstrap son deterministas.
-- Los experimentos 2 y 3 desactivan `cudnn.benchmark` y fijan
+- Los experimentos 2, 2b y 3 desactivan `cudnn.benchmark` y fijan
   `torch.backends.cudnn.deterministic`.
 - El LLM usa decodificación greedy (`do_sample=False`).
-- Las métricas de referencia pueden variar levemente por diferencias de
-  hardware, versión de `transformers` o actualizaciones de los datasets.
+- Los datasets y modelos se pueden fijar con `--cache-dir`, pero las versiones
+  descargadas dependen de HuggingFace.
+- Las métricas pueden variar levemente por diferencias de hardware, versión de
+  `transformers` o actualizaciones de los datasets.
 
 ---
 
@@ -579,4 +725,18 @@ Definí `HF_TOKEN` antes de correr el script. También se puede limpiar la cach�
 
 ```bash
 rm -rf ~/.cache/huggingface/hub
+```
+
+**Los gráficos no abren o pesan demasiado**
+
+Los HTML de Altair incluyen los datos embebidos. Si el navegador se pone lento,
+probá abrirlos con `--save-png` o reducí `--max-examples` / `--max-pairs`.
+
+**Quiero ver todas las opciones de un experimento**
+
+```bash
+python experiments/exp1_lexical_perplexity.py --help
+python experiments/exp2_binary_classification.py --help
+python experiments/exp2b_phantom_paired_control.py --help
+python experiments/exp3_logical_consistency.py --help
 ```
