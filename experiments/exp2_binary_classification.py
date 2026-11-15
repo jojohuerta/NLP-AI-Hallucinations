@@ -903,7 +903,12 @@ def build_class_balance_chart(df: pd.DataFrame) -> alt.Chart:
         alt.Chart(counts)
         .mark_bar(size=70, cornerRadiusTopLeft=4, cornerRadiusTopRight=4)
         .encode(
-            x=alt.X("label_name:N", title=None, sort=list(LABEL_NAMES.values())),
+            x=alt.X(
+                "label_name:N",
+                title=None,
+                sort=list(LABEL_NAMES.values()),
+                axis=alt.Axis(labelAngle=0),
+            ),
             y=alt.Y("count:Q", title="Cantidad de ejemplos"),
             color=alt.Color(
                 "source:N",
@@ -939,7 +944,12 @@ def build_length_distribution_chart(df: pd.DataFrame) -> alt.Chart:
     box = alt.Chart(plot_df).mark_boxplot(
         extent="min-max", size=44, median={"color": "black"}
     ).encode(
-        x=alt.X("label_name:N", title=None, sort=list(LABEL_NAMES.values())),
+        x=alt.X(
+            "label_name:N",
+            title=None,
+            sort=list(LABEL_NAMES.values()),
+            axis=alt.Axis(labelAngle=0),
+        ),
         y=alt.Y("n_words:Q", title="Palabras por respuesta (escala log)", scale=alt.Scale(type="log")),
         color=alt.Color(
             "source:N",
@@ -951,7 +961,12 @@ def build_length_distribution_chart(df: pd.DataFrame) -> alt.Chart:
         ),
     )
     points = alt.Chart(plot_df).mark_circle(size=16, opacity=0.30).encode(
-        x=alt.X("label_name:N", title=None, sort=list(LABEL_NAMES.values())),
+        x=alt.X(
+            "label_name:N",
+            title=None,
+            sort=list(LABEL_NAMES.values()),
+            axis=alt.Axis(labelAngle=0),
+        ),
         xOffset=alt.X("jitter:Q", scale=alt.Scale(domain=[-0.35, 0.35])),
         y=alt.Y("n_words:Q"),
         color=alt.Color(
@@ -972,7 +987,7 @@ def build_length_distribution_chart(df: pd.DataFrame) -> alt.Chart:
     return (box + points).properties(
         title=alt.TitleParams(
             text="Exp. 2 — Longitud de las respuestas por clase",
-            subtitle="La longitud es un posible confound entre fuentes; conviene reportarla",
+            subtitle="La longitud es un posible confound entre fuentes",
         ),
         width=460,
         height=360,
@@ -1008,7 +1023,7 @@ def build_confusion_matrix_chart(
     order = list(LABEL_NAMES.values())
 
     base = alt.Chart(cm_df).encode(
-        x=alt.X("prediccion:N", title="Predicción", sort=order),
+        x=alt.X("prediccion:N", title="Predicción", sort=order, axis=alt.Axis(labelAngle=0)),
         y=alt.Y("real:N", title="Etiqueta real", sort=order),
     )
     heatmap = base.mark_rect(cornerRadius=4).encode(
@@ -1063,7 +1078,7 @@ def build_model_comparison_chart(
     plot_df = pd.DataFrame(records)
 
     bars = alt.Chart(plot_df).mark_bar(size=38, cornerRadiusTopLeft=3, cornerRadiusTopRight=3).encode(
-        x=alt.X("modelo:N", title=None),
+        x=alt.X("modelo:N", title=None, axis=alt.Axis(labelAngle=0)),
         xOffset=alt.X("metrica:N", title=None, sort=["F1 macro", "MCC", "ROC-AUC"]),
         y=alt.Y("valor:Q", title="Valor de la métrica", scale=alt.Scale(domain=[0, 1])),
         color=alt.Color(
@@ -1089,10 +1104,10 @@ def build_model_comparison_chart(
             text=f"{title_prefix} — Baseline léxico vs. fine-tuning semántico",
             subtitle="Test set balanceado; métricas principales: F1 macro y MCC",
         ),
-        width=520,
+        width=620,
         height=360,
     )
-
+    
 
 def build_top_features_chart(top_features: pd.DataFrame) -> alt.Chart:
     """Barras de los términos con mayor peso absoluto del baseline."""
@@ -1121,7 +1136,7 @@ def build_top_features_chart(top_features: pd.DataFrame) -> alt.Chart:
         title=alt.TitleParams(
             text="Exp. 2 — Términos más asociados a cada fuente",
             subtitle=(
-                "Diagnóstico de confound: el baseline puede separar temas/estilos "
+                "Diagnóstico: el baseline puede separar temas/estilos "
                 "de Mu-SHROOM vs. Phantom en lugar de alucinaciones"
             ),
         ),
