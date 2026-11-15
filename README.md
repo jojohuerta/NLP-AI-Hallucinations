@@ -549,7 +549,6 @@ graphs/exp2b/
   exp2b_confusion_baseline.html
   exp2b_confusion_transformer.html
   exp2b_transformer_training_curves.html
-  exp2b_model_comparison.html
   exp2b_probability_distribution.html
   exp2b_artifact_diagnostic.html
   exp2b_control_ablation.html

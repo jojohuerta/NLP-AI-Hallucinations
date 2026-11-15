@@ -98,7 +98,6 @@ from exp2_binary_classification import (  # noqa: E402
     SEED,
     build_baseline_pipeline,
     build_confusion_matrix_chart,
-    build_model_comparison_chart,
     build_probability_chart,
     build_training_curves_chart,
     classification_metrics,
@@ -924,6 +923,7 @@ def build_split_balance_chart(df: pd.DataFrame) -> alt.Chart:
                 "split_name:N",
                 title=None,
                 sort=list(SPLIT_NAMES.values()),
+                axis=alt.Axis(labelAngle=0),
             ),
             xOffset=alt.X("label_name:N", title=None, sort=list(LABEL_NAMES.values())),
             y=alt.Y("count:Q", title="Cantidad de ejemplos"),
@@ -972,7 +972,12 @@ def build_length_control_chart(df: pd.DataFrame) -> alt.Chart:
         alt.Chart(plot_df)
         .mark_boxplot(extent="min-max", size=42, median={"color": "black"})
         .encode(
-            x=alt.X("label_name:N", title=None, sort=list(LABEL_NAMES.values())),
+            x=alt.X(
+                "label_name:N",
+                title=None,
+                sort=list(LABEL_NAMES.values()),
+                axis=alt.Axis(labelAngle=0),
+            ),
             y=alt.Y(
                 "n_words:Q",
                 title="Palabras por respuesta (escala log)",
@@ -992,7 +997,12 @@ def build_length_control_chart(df: pd.DataFrame) -> alt.Chart:
         alt.Chart(plot_df)
         .mark_circle(size=14, opacity=0.25)
         .encode(
-            x=alt.X("label_name:N", title=None, sort=list(LABEL_NAMES.values())),
+            x=alt.X(
+                "label_name:N",
+                title=None,
+                sort=list(LABEL_NAMES.values()),
+                axis=alt.Axis(labelAngle=0),
+            ),
             xOffset=alt.X("jitter:Q", scale=alt.Scale(domain=[-0.35, 0.35])),
             y=alt.Y("n_words:Q"),
             color=alt.Color(
@@ -1014,10 +1024,6 @@ def build_length_control_chart(df: pd.DataFrame) -> alt.Chart:
         .properties(
             title=alt.TitleParams(
                 text="Exp. 2b — La longitud deja de ser un atajo",
-                subtitle=(
-                    "Izquierda: las alucinaciones son mucho más largas. "
-                    "Derecha: todos los textos tienen exactamente la misma cantidad de tokens y sin puntuación"
-                ),
             ),
             width=250,
             height=340,
@@ -1065,7 +1071,7 @@ def build_jaccard_chart(
     )
     label = (
         alt.Chart(pd.DataFrame({"x": [max_jaccard], "y": [0], "texto": ["umbral de exclusión"]}))
-        .mark_text(align="right", dx=-6, dy=10, color=COLOR_HALLUCINATION, fontSize=10)
+        .mark_text(align="right", dx=-6, dy=44, color=COLOR_HALLUCINATION, fontSize=10)
         .encode(x="x:Q", y="y:Q", text="texto:N")
     )
     return (histogram + rule + label).properties(
@@ -1079,6 +1085,7 @@ def build_jaccard_chart(
         ),
         width=560,
         height=300,
+        padding={"top": 5, "right": 5, "bottom": 30, "left": 5},
     )
 
 
@@ -1138,7 +1145,7 @@ def build_control_ablation_chart(ablation: pd.DataFrame) -> alt.Chart:
                 "condition:N",
                 title=None,
                 sort=condition_order,
-                axis=alt.Axis(labelAngle=-15),
+                axis=alt.Axis(labelAngle=0),
             ),
             y=alt.Y(
                 "value:Q",
@@ -1175,7 +1182,7 @@ def build_control_ablation_chart(ablation: pd.DataFrame) -> alt.Chart:
                     "Al parear por tema y longitud, el atajo desaparece"
                 ),
             ),
-            width=280,
+            width=320,
             height=340,
         )
         .facet(column=alt.Column("model:N", title=None, sort=model_order))
@@ -1567,14 +1574,6 @@ def export_results(
                 save_png,
             )
             charts.append("exp2b_transformer_training_curves.html")
-
-    save_chart(
-        build_model_comparison_chart(model_metrics, title_prefix="Exp. 2b"),
-        "exp2b_model_comparison",
-        graphs_dir,
-        save_png,
-    )
-    charts.append("exp2b_model_comparison.html")
 
     save_chart(
         build_probability_chart(prediction_frames, title_prefix="Exp. 2b"),
@@ -2273,7 +2272,6 @@ if __name__ == "__main__":
 #   graphs/exp2b/exp2b_top_features.html
 #   graphs/exp2b/exp2b_confusion_baseline.html
 #   graphs/exp2b/exp2b_confusion_transformer.html
-#   graphs/exp2b/exp2b_model_comparison.html
 #   graphs/exp2b/exp2b_probability_distribution.html
 #   graphs/exp2b/exp2b_transformer_training_curves.html
 #   graphs/exp2b/exp2b_control_ablation.html
