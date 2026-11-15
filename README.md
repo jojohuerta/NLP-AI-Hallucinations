@@ -315,7 +315,7 @@ Los experimentos usan dos datasets públicos de HuggingFace.
 
 | Experimento | Construcción | Tamaño de la corrida de referencia |
 |---|---|---|
-| 1 | Segmentos A (alucinados) y B (veraces) extraídos de Mu-SHROOM | 609 segmentos A + 599 B; 797 usados en TF-IDF |
+| 1 | Segmentos A (alucinados) y B (veraces) extraídos de Mu-SHROOM | 609 segmentos A + 599 B; 797 usados en BoW/TF-IDF |
 | 2 | 197 positivos de Mu-SHROOM + 197 negativos únicos de Phantom | 394 ejemplos balanceados 50/50 |
 | 2b | Pares limpio/alucinado de Phantom, mismo tema, misma longitud y sin puntuación | 324 pares = 648 ejemplos |
 | 3 | Muestra balanceada de Phantom, deduplicada por `(query, context, answer)` | 200 ejemplos (100 + 100) |
@@ -328,20 +328,27 @@ Los experimentos usan dos datasets públicos de HuggingFace.
 
 **Script:** `experiments/exp1_lexical_perplexity.py`
 
-Compara, dentro de las respuestas de Mu-SHROOM, los segmentos alucinados contra
-los veraces desde dos perspectivas:
+Compara, dentro de las respuestas de Mu-SHROOM, los segmentos alucinados (Corpus
+A) contra los veraces (Corpus B) desde dos perspectivas:
 
-1. **Léxico:** TF-IDF + LogisticRegression sobre segmentos. El split es agrupado
-   por documento (`GroupShuffleSplit` por `doc_id`) para evitar leakage, y los
-   coeficientes se estiman con bootstrap agrupado por documento.
+1. **Léxico:** se ejecuta el **mismo pipeline** con **Bag-of-Words**
+   (`CountVectorizer`) y **TF-IDF** (`TfidfVectorizer`): split agrupado por
+   documento (`GroupShuffleSplit` por `doc_id`) para evitar leakage y
+   `LogisticRegression` con `class_weight="balanced"`. Para cada enfoque se
+   reportan en test: F1 macro, MCC, precisión y recall por clase, matriz de
+   confusión y el **Top 15 de palabras** por valor absoluto del coeficiente
+   (con su valor y la dirección: Corpus A o Corpus B).
 2. **Perplejidad:** GPT-2 calcula la NLL sobre el texto original completo. La NLL
-   se separa según si cada token cae dentro o fuera de un span alucinado, y se
-   aplica un t-test apareado a nivel documento.
+   se separa según si cada token cae dentro o fuera de un span alucinado. Se
+   reportan la **NLL media** y la **perplejidad media** de cada corpus, más un
+   **t-test apareado** a nivel documento (estadístico t y p-valor).
 
 Decisiones metodológicas:
 
 - Los offsets de `hard_labels` son `[start, end)` a nivel carácter.
 - Los spans se normalizan (clamp, orden, merge de solapamientos y adyacencias).
+- BoW y TF-IDF usan exactamente el mismo conjunto de segmentos y el mismo split
+  train/test.
 - Un token se asigna al Corpus A si al menos el 50 % de sus caracteres cae
   dentro de un span alucinado; si no, va al Corpus B.
 - Se descartan tokens sin caracteres alfanuméricos.
@@ -361,22 +368,24 @@ python experiments/exp1_lexical_perplexity.py --device cpu
 # Elegir splits de Mu-SHROOM
 python experiments/exp1_lexical_perplexity.py --splits validation test
 
-# Menos remuestreos bootstrap
-python experiments/exp1_lexical_perplexity.py --bootstrap 100
+# Correr solo la parte léxica (sin descargar el LM)
+python experiments/exp1_lexical_perplexity.py --skip-perplexity
 ```
 
 Salidas:
 
 ```text
 graphs/exp1/
-  exp1_top_features.html
+  exp1_lexical_metrics.html
+  exp1_top_features_bow.html
+  exp1_top_features_tfidf.html
   exp1_perplexity_boxplot.html
-  exp1_perplexity_paired_scatter.html
   exp1_perplexity_delta_histogram.html
 
 results/exp1/
   exp1_segments.csv
-  exp1_top_features.csv
+  exp1_top_features_bow.csv
+  exp1_top_features_tfidf.csv
   exp1_perplexity_per_document.csv
   exp1_summary.json
 ```
@@ -681,7 +690,8 @@ python experiments/exp3_logical_consistency.py --save-png
 ## Reproducibilidad
 
 - Todos los scripts usan `--seed 42` por defecto.
-- Los splits, muestreos y remuestreos bootstrap son deterministas.
+- Los splits y muestreos son deterministas; el Experimento 3 también fija sus
+  remuestreos bootstrap con la semilla.
 - Los experimentos 2, 2b y 3 desactivan `cudnn.benchmark` y fijan
   `torch.backends.cudnn.deterministic`.
 - El LLM usa decodificación greedy (`do_sample=False`).

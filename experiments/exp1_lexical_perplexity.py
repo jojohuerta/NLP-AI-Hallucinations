@@ -10,27 +10,32 @@ Comparar, dentro de las respuestas del dataset Mu-SHROOM (configuración "en"),
 los segmentos marcados como alucinación (Corpus A) contra el resto del texto
 (Corpus B), desde dos perspectivas complementarias:
 
-1. Léxica: TF-IDF + LogisticRegression. Se inspeccionan los coeficientes del
-   modelo y se estima su incertidumbre mediante bootstrap agrupado por
-   documento. También se reporta un t-test de una muestra sobre los pesos.
+1. Léxica: se comparan **Bag-of-Words (CountVectorizer)** y **TF-IDF
+   (TfidfVectorizer)** con el mismo pipeline: split agrupado por documento,
+   LogisticRegression con ``class_weight="balanced"`` y las mismas métricas de
+   test. Para cada enfoque se reportan F1 macro, MCC, precisión y recall por
+   clase, matriz de confusión y el Top 15 de palabras por valor absoluto del
+   coeficiente.
 2. De perplejidad: se pasa el texto ORIGINAL completo por un LM causal (GPT-2
    por defecto) y se calcula la NLL (negative log-likelihood) únicamente sobre
    los tokens que caen dentro de los spans alucinados y sobre los que caen
-   fuera. Luego se hace un t-test apareado a nivel documento.
+   fuera. Se reportan la NLL media y la perplejidad media de cada corpus, más
+   un t-test apareado a nivel documento sobre la NLL media.
 
 Decisiones metodológicas relevantes
 -----------------------------------
 * Los offsets de ``hard_labels`` son pares [start, end) a nivel carácter.
 * Los spans se normalizan (clamp, orden, merge de solapamientos/adyacencias).
-* El split train/test de TF-IDF es GroupShuffleSplit por ``doc_id`` para evitar
-  leakage entre segmentos del mismo documento.
+* BoW y TF-IDF usan exactamente el mismo conjunto de segmentos y el mismo split
+  train/test: GroupShuffleSplit por ``doc_id`` para evitar leakage entre
+  segmentos del mismo documento.
 * La perplejidad se calcula con el contexto original: cada token se predice
   usando todos los tokens anteriores del documento, y después se etiqueta como
   A/B según el solapamiento de su span de caracteres con los ``hard_labels``.
 * Un token se asigna a A si al menos el 50 % de sus caracteres cae dentro de
   un span alucinado; en caso contrario se asigna a B. Se descartan tokens sin
   caracteres alfanuméricos.
-* Todos los remuestreos y splits usan una semilla fija (``--seed``).
+* Todos los splits usan una semilla fija (``--seed``).
 
 Salidas
 -------
@@ -61,9 +66,14 @@ import numpy as np
 import pandas as pd
 from datasets import load_dataset
 from scipy import stats
-from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import f1_score
+from sklearn.metrics import (
+    confusion_matrix,
+    f1_score,
+    matthews_corrcoef,
+    precision_recall_fscore_support,
+)
 from sklearn.model_selection import GroupShuffleSplit
 
 # ---------------------------------------------------------------------------
@@ -78,6 +88,8 @@ DEFAULT_SPLITS: tuple[str, ...] = ("validation", "test")
 COLOR_HALLUCINATION = "#E45756"  # rojo (consistente con el EDA)
 COLOR_TRUTHFUL = "#54A24B"       # verde (consistente con el EDA)
 COLOR_NEUTRAL = "#4C78A8"        # azul
+COLOR_BOW = "#4C78A8"            # azul para Bag-of-Words
+COLOR_TFIDF = "#F58518"          # naranja para TF-IDF
 
 TOKEN_PATTERN = r"(?u)\b\w\w+\b"
 CONTENT_PATTERN = re.compile(r"[A-Za-z0-9]")
@@ -345,7 +357,22 @@ def build_segment_dataframe(df: pd.DataFrame) -> pd.DataFrame:
 # 2. Análisis léxico: TF-IDF + LogisticRegression
 # ---------------------------------------------------------------------------
 
-def make_vectorizer() -> TfidfVectorizer:
+def make_bow_vectorizer() -> CountVectorizer:
+    """Vectorizador Bag-of-Words con la misma configuración que el TF-IDF."""
+    return CountVectorizer(
+        lowercase=True,
+        strip_accents="unicode",
+        ngram_range=(1, 2),
+        min_df=2,
+        max_df=0.95,
+        max_features=50_000,
+        stop_words="english",
+        token_pattern=TOKEN_PATTERN,
+        dtype=np.int64,
+    )
+
+
+def make_tfidf_vectorizer() -> TfidfVectorizer:
     """Vectorizador TF-IDF reproducible y adecuado para textos cortos."""
     return TfidfVectorizer(
         lowercase=True,
@@ -372,85 +399,129 @@ def make_classifier(seed: int = SEED) -> LogisticRegression:
     )
 
 
-def filter_empty_tfidf_rows(segments: pd.DataFrame) -> pd.DataFrame:
-    """Elimina segmentos que quedan sin features tras quitar stopwords."""
-    vectorizer = make_vectorizer()
+def prepare_lexical_segments(segments: pd.DataFrame) -> pd.DataFrame:
+    """Conserva los segmentos con al menos una feature léxica.
+
+    Se usa el vocabulario del CountVectorizer, que es el mismo que el de
+    TF-IDF (mismo tokenizador, stopwords, ``min_df`` y ``max_df``). Así BoW y
+    TF-IDF se entrenan y evalúan exactamente sobre las mismas filas.
+    """
+    vectorizer = make_bow_vectorizer()
     try:
         matrix = vectorizer.fit_transform(segments["text_clean"])
     except ValueError:
-        return segments.iloc[0:0].copy()
+        raise RuntimeError(
+            "No quedaron segmentos con tokens útiles para el análisis léxico."
+        ) from None
 
     mask = matrix.getnnz(axis=1) > 0
-    filtered = segments.loc[mask].reset_index(drop=True)
-    return filtered
+    data = segments.loc[mask].reset_index(drop=True)
+
+    if data.empty:
+        raise RuntimeError("No quedaron segmentos con tokens útiles para el análisis léxico.")
+    return data
 
 
 @dataclass
 class LexicalResult:
+    name: str
+    vectorizer_name: str
     segments: pd.DataFrame
-    vectorizer: TfidfVectorizer
+    vectorizer: Any
     classifier: LogisticRegression
     coefficients: np.ndarray
     feature_names: np.ndarray
     top_features: pd.DataFrame
-    coef_ttest: dict[str, float]
     evaluation: dict[str, Any]
 
 
-def fit_and_interpret_tfidf(
-    segments: pd.DataFrame,
-    seed: int = SEED,
-    n_bootstrap: int = 200,
-    top_k: int = 15,
-) -> LexicalResult:
-    """Entrena TF-IDF + LogReg, evalúa con split agrupado y extrae coeficientes.
+def classification_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, Any]:
+    """Métricas binarias: F1 macro, MCC, precisión/recall por clase y matriz."""
+    labels = [0, 1]
+    precision, recall, _, _ = precision_recall_fscore_support(
+        y_true, y_pred, labels=labels, zero_division=0
+    )
+    matrix = confusion_matrix(y_true, y_pred, labels=labels)
 
-    El modelo final para interpretación se entrena con todos los segmentos.
-    La evaluación supervisada usa un GroupShuffleSplit por ``doc_id`` para que
-    ningún documento aporte segmentos a train y test a la vez.
-    """
-    data = filter_empty_tfidf_rows(segments)
-    if data.empty:
-        raise RuntimeError("No quedaron segmentos con features TF-IDF.")
+    return {
+        "n": int(len(y_true)),
+        "n_negative": int(np.sum(y_true == 0)),
+        "n_positive": int(np.sum(y_true == 1)),
+        "f1_macro": float(
+            f1_score(y_true, y_pred, average="macro", labels=labels, zero_division=0)
+        ),
+        "mcc": float(matthews_corrcoef(y_true, y_pred)),
+        "precision_no_hallucination": float(precision[0]),
+        "recall_no_hallucination": float(recall[0]),
+        "precision_hallucination": float(precision[1]),
+        "recall_hallucination": float(recall[1]),
+        "confusion_matrix": {
+            "tn": int(matrix[0, 0]),
+            "fp": int(matrix[0, 1]),
+            "fn": int(matrix[1, 0]),
+            "tp": int(matrix[1, 1]),
+        },
+    }
 
+
+def make_grouped_split(
+    data: pd.DataFrame, seed: int = SEED
+) -> tuple[np.ndarray, np.ndarray]:
+    """Split train/test agrupado por documento, compartido por BoW y TF-IDF."""
     y = (data["corpus"] == "A").astype(int).to_numpy()
     groups = data["doc_id"].to_numpy()
 
     if len(np.unique(y)) < 2:
         raise RuntimeError("Se necesitan las dos clases (A y B) para entrenar.")
 
-    # --- Evaluación con split agrupado -------------------------------------
     splitter = GroupShuffleSplit(n_splits=1, test_size=0.25, random_state=seed)
-    train_idx, test_idx = next(splitter.split(data, y, groups=groups))
+    return next(splitter.split(data, y, groups=groups))
 
+
+def evaluate_lexical_model(
+    data: pd.DataFrame,
+    train_idx: np.ndarray,
+    test_idx: np.ndarray,
+    vectorizer_factory: Any,
+    name: str,
+    vectorizer_name: str,
+    seed: int = SEED,
+    top_k: int = 15,
+) -> LexicalResult:
+    """Entrena y evalúa un modelo léxico con el split agrupado ya fijado.
+
+    El modelo de evaluación se ajusta solo con train. Para interpretar los
+    coeficientes se ajusta un modelo final con todos los segmentos, igual para
+    BoW y TF-IDF.
+    """
     train_df = data.iloc[train_idx]
     test_df = data.iloc[test_idx]
 
-    eval_vectorizer = make_vectorizer()
+    y_train = (train_df["corpus"] == "A").astype(int).to_numpy()
+    y_test = (test_df["corpus"] == "A").astype(int).to_numpy()
+
+    eval_vectorizer = vectorizer_factory()
     x_train = eval_vectorizer.fit_transform(train_df["text_clean"])
     x_test = eval_vectorizer.transform(test_df["text_clean"])
 
     eval_classifier = make_classifier(seed)
-    eval_classifier.fit(x_train, (train_df["corpus"] == "A").astype(int))
+    eval_classifier.fit(x_train, y_train)
     y_pred = eval_classifier.predict(x_test)
-    y_test = (test_df["corpus"] == "A").astype(int).to_numpy()
-
-    macro_f1 = f1_score(y_test, y_pred, average="macro", labels=[0, 1], zero_division=0)
 
     evaluation = {
         "n_train_segments": int(len(train_df)),
         "n_test_segments": int(len(test_df)),
         "n_train_documents": int(train_df["doc_id"].nunique()),
         "n_test_documents": int(test_df["doc_id"].nunique()),
-        "macro_f1_test": float(macro_f1),
         "vocabulary_size_eval": int(len(eval_vectorizer.get_feature_names_out())),
+        "metrics_test": classification_metrics(y_test, y_pred),
     }
 
-    # --- Modelo final para interpretación ----------------------------------
-    vectorizer = make_vectorizer()
+    # Modelo final para interpretar los coeficientes.
+    vectorizer = vectorizer_factory()
     x_all = vectorizer.fit_transform(data["text_clean"])
     classifier = make_classifier(seed)
-    classifier.fit(x_all, y)
+    classifier.fit(x_all, (data["corpus"] == "A").astype(int))
 
     coefficients = classifier.coef_[0].astype(float)
     feature_names = vectorizer.get_feature_names_out()
@@ -463,124 +534,49 @@ def fit_and_interpret_tfidf(
             "abs_coefficient": np.abs(coefficients[order]),
         }
     )
-
-    # --- Test t de una muestra sobre TODOS los pesos -----------------------
-    # NOTA: este test describe si la distribución de coeficientes está
-    # centrada fuera de cero. Es el test solicitado en el enunciado, pero no
-    # debe interpretarse como un p-valor por feature: los coeficientes no son
-    # observaciones i.i.d. La evidencia por feature se reporta con el IC
-    # bootstrap de la sección siguiente.
-    t_stat, p_value = stats.ttest_1samp(coefficients, popmean=0.0, nan_policy="omit")
-    coef_ttest = {
-        "t_statistic": float(t_stat),
-        "p_value": float(p_value),
-        "mean_coefficient": float(np.mean(coefficients)),
-        "std_coefficient": float(np.std(coefficients, ddof=1)),
-        "n_features": int(len(coefficients)),
-    }
-
-    # --- Bootstrap agrupado por documento para los top features ------------
-    top = bootstrap_top_coefficients(
-        data=data,
-        top_features=top["feature"].tolist(),
-        n_bootstrap=n_bootstrap,
-        seed=seed,
-    ).merge(top, on="feature", how="left")
-    top = top.sort_values("abs_coefficient", ascending=False).reset_index(drop=True)
     top["direction"] = np.where(
         top["coefficient"] > 0, "A (alucinación)", "B (veraz)"
     )
-    top["significant_95ci"] = (top["ci_low"] > 0) | (top["ci_high"] < 0)
+    evaluation["n_features_full_fit"] = int(len(coefficients))
 
     return LexicalResult(
+        name=name,
+        vectorizer_name=vectorizer_name,
         segments=data,
         vectorizer=vectorizer,
         classifier=classifier,
         coefficients=coefficients,
         feature_names=feature_names,
-        top_features=top,
-        coef_ttest=coef_ttest,
+        top_features=top.reset_index(drop=True),
         evaluation=evaluation,
     )
 
 
-def bootstrap_top_coefficients(
-    data: pd.DataFrame,
-    top_features: Sequence[str],
-    n_bootstrap: int = 200,
-    seed: int = SEED,
-) -> pd.DataFrame:
-    """IC bootstrap (percentil) para los coeficientes de los top features.
+def run_lexical_analysis(
+    segments: pd.DataFrame, seed: int = SEED, top_k: int = 15
+) -> dict[str, LexicalResult]:
+    """Corre BoW y TF-IDF con el mismo conjunto de segmentos y el mismo split."""
+    data = prepare_lexical_segments(segments)
+    train_idx, test_idx = make_grouped_split(data, seed=seed)
 
-    Se remuestrean DOCUMENTOS completos con reemplazo (no segmentos), de modo
-    que se preserva la dependencia entre segmentos del mismo documento.
-    """
-    features = list(dict.fromkeys(top_features))
-    if n_bootstrap <= 0:
-        return pd.DataFrame(
-            {
-                "feature": features,
-                "ci_low": np.nan,
-                "ci_high": np.nan,
-                "bootstrap_mean": np.nan,
-                "n_bootstrap_ok": 0,
-            }
+    configs = [
+        ("bow", make_bow_vectorizer, "Bag-of-Words", "CountVectorizer"),
+        ("tfidf", make_tfidf_vectorizer, "TF-IDF", "TfidfVectorizer"),
+    ]
+
+    return {
+        key: evaluate_lexical_model(
+            data=data,
+            train_idx=train_idx,
+            test_idx=test_idx,
+            vectorizer_factory=factory,
+            name=name,
+            vectorizer_name=vectorizer_name,
+            seed=seed,
+            top_k=top_k,
         )
-
-    rng = np.random.default_rng(seed)
-    doc_ids = data["doc_id"].unique()
-    groups = {
-        doc_id: frame for doc_id, frame in data.groupby("doc_id", sort=False)
+        for key, factory, name, vectorizer_name in configs
     }
-
-    samples: dict[str, list[float]] = {feature: [] for feature in features}
-
-    for _ in range(n_bootstrap):
-        sampled_ids = rng.choice(doc_ids, size=len(doc_ids), replace=True)
-        boot = pd.concat(
-            [groups[doc_id] for doc_id in sampled_ids], ignore_index=True
-        )
-        y_boot = (boot["corpus"] == "A").astype(int).to_numpy()
-        if len(np.unique(y_boot)) < 2:
-            continue
-
-        vectorizer = make_vectorizer()
-        try:
-            x_boot = vectorizer.fit_transform(boot["text_clean"])
-        except ValueError:
-            continue
-
-        classifier = make_classifier(seed)
-        classifier.fit(x_boot, y_boot)
-        coef_map = dict(zip(vectorizer.get_feature_names_out(), classifier.coef_[0]))
-        for feature in features:
-            samples[feature].append(float(coef_map.get(feature, 0.0)))
-
-    records = []
-    for feature in features:
-        values = np.asarray(samples[feature], dtype=float)
-        if values.size == 0:
-            records.append(
-                {
-                    "feature": feature,
-                    "ci_low": np.nan,
-                    "ci_high": np.nan,
-                    "bootstrap_mean": np.nan,
-                    "n_bootstrap_ok": 0,
-                }
-            )
-        else:
-            records.append(
-                {
-                    "feature": feature,
-                    "ci_low": float(np.percentile(values, 2.5)),
-                    "ci_high": float(np.percentile(values, 97.5)),
-                    "bootstrap_mean": float(np.mean(values)),
-                    "n_bootstrap_ok": int(values.size),
-                }
-            )
-
-    return pd.DataFrame(records)
 
 
 # ---------------------------------------------------------------------------
@@ -826,61 +822,25 @@ def compute_perplexity_table(
 
 
 def paired_statistics(table: pd.DataFrame) -> dict[str, Any]:
-    """T-test apareado + Wilcoxon + tamaño del efecto sobre NLL A vs B."""
+    """NLL/perplejidad media y t-test apareado a nivel documento (A vs B)."""
     a = table["mean_nll_a"].to_numpy(dtype=float)
     b = table["mean_nll_b"].to_numpy(dtype=float)
-    diff = a - b
 
     t_stat, t_pvalue = stats.ttest_rel(a, b, nan_policy="omit")
-    mean_diff = float(np.mean(diff))
-    std_diff = float(np.std(diff, ddof=1)) if len(diff) > 1 else float("nan")
-    cohens_d = mean_diff / std_diff if std_diff and not math.isnan(std_diff) else float("nan")
-
-    # IC 95 % de la diferencia media (aproximación normal).
-    n = len(diff)
-    if n > 1 and std_diff and not math.isnan(std_diff):
-        standard_error = std_diff / math.sqrt(n)
-        critical = stats.t.ppf(0.975, df=n - 1)
-        ci_low = mean_diff - critical * standard_error
-        ci_high = mean_diff + critical * standard_error
-    else:
-        ci_low = ci_high = float("nan")
-
-    wilcoxon_pvalue = float("nan")
-    if n >= 10 and np.any(diff != 0):
-        try:
-            wilcoxon_pvalue = float(
-                stats.wilcoxon(a, b, alternative="two-sided", zero_method="wilcox").pvalue
-            )
-        except ValueError:
-            wilcoxon_pvalue = float("nan")
-
-    weights_a = table["n_tokens_a"].to_numpy(dtype=float)
-    weights_b = table["n_tokens_b"].to_numpy(dtype=float)
 
     return {
-        "n_documents_paired": int(n),
-        "n_tokens_a_total": int(weights_a.sum()),
-        "n_tokens_b_total": int(weights_b.sum()),
+        "n_documents_paired": int(len(a)),
+        "n_tokens_a_total": int(table["n_tokens_a"].sum()),
+        "n_tokens_b_total": int(table["n_tokens_b"].sum()),
         "mean_nll_a": float(np.mean(a)),
         "mean_nll_b": float(np.mean(b)),
         "mean_ppl_a": float(np.exp(np.mean(a))),
         "mean_ppl_b": float(np.exp(np.mean(b))),
-        "pooled_ppl_a": float(np.exp(np.average(a, weights=weights_a))),
-        "pooled_ppl_b": float(np.exp(np.average(b, weights=weights_b))),
-        "median_ppl_a": float(np.median(np.exp(a))),
-        "median_ppl_b": float(np.median(np.exp(b))),
-        "mean_delta_nll": mean_diff,
-        "delta_nll_ci95_low": float(ci_low),
-        "delta_nll_ci95_high": float(ci_high),
         "paired_ttest": {
             "t_statistic": float(t_stat),
             "p_value": float(t_pvalue),
-            "degrees_of_freedom": int(n - 1),
+            "degrees_of_freedom": int(len(a) - 1),
         },
-        "cohens_d_paired": float(cohens_d),
-        "wilcoxon_p_value": wilcoxon_pvalue,
-        "fraction_docs_a_more_surprising": float(np.mean(diff > 0)),
     }
 
 
@@ -906,46 +866,37 @@ def save_chart(chart: alt.Chart, stem: str, graphs_dir: Path, save_png: bool = F
     return html_path
 
 
-def build_top_features_chart(top: pd.DataFrame, coef_ttest: dict[str, Any], n_bootstrap: int) -> alt.Chart:
-    """Barras horizontales de coeficientes con IC 95 % bootstrap."""
+def build_top_features_chart(top: pd.DataFrame, model_name: str) -> alt.Chart:
+    """Barras horizontales con el Top 15 de coeficientes de LogisticRegression."""
     order = top["feature"].tolist()
     color_scale = alt.Scale(
         domain=["A (alucinación)", "B (veraz)"],
         range=[COLOR_HALLUCINATION, COLOR_TRUTHFUL],
     )
 
-    base = alt.Chart(top).encode(
+    bars = alt.Chart(top).mark_bar(size=18).encode(
         y=alt.Y("feature:N", sort=order, title=None),
-    )
-    bars = base.mark_bar(size=18).encode(
         x=alt.X("coefficient:Q", title="Coeficiente LogisticRegression (log-odds)"),
         color=alt.Color("direction:N", scale=color_scale, title=None),
         tooltip=[
-            alt.Tooltip("feature:N", title="Feature"),
-            alt.Tooltip("coefficient:Q", format=".4f", title="Coef."),
-            alt.Tooltip("ci_low:Q", format=".4f", title="IC 95% inf."),
-            alt.Tooltip("ci_high:Q", format=".4f", title="IC 95% sup."),
-            alt.Tooltip("significant_95ci:N", title="IC excluye 0"),
+            alt.Tooltip("feature:N", title="Palabra"),
+            alt.Tooltip("coefficient:Q", format=".4f", title="Coeficiente"),
+            alt.Tooltip("direction:N", title="Dirección"),
         ],
-    )
-    error_bars = base.mark_rule(strokeWidth=2, color="black").encode(
-        x=alt.X("ci_low:Q"),
-        x2="ci_high:Q",
     )
     zero_rule = alt.Chart(pd.DataFrame({"x": [0.0]})).mark_rule(
         color="gray", strokeDash=[4, 4]
     ).encode(x="x:Q")
 
-    subtitle = (
-        f"Top 15 por |coeficiente| · t-test de pesos: t={coef_ttest['t_statistic']:.2f}, "
-        f"p={coef_ttest['p_value']:.2e} · IC 95 % bootstrap agrupado ({n_bootstrap} remuestreos)"
-    )
     return (
-        (bars + error_bars + zero_rule)
+        (bars + zero_rule)
         .properties(
             title=alt.TitleParams(
-                text="Exp. 1 — Términos asociados a alucinación vs. texto veraz",
-                subtitle=subtitle,
+                text=f"Exp. 1 — {model_name}: Top 15 palabras por |coeficiente|",
+                subtitle=(
+                    "Positivo = empuja hacia Corpus A (alucinación) · "
+                    "negativo = empuja hacia Corpus B (veraz)"
+                ),
             ),
             width=640,
             height=420,
@@ -955,8 +906,72 @@ def build_top_features_chart(top: pd.DataFrame, coef_ttest: dict[str, Any], n_bo
     )
 
 
-def build_perplexity_plots(table: pd.DataFrame, stats_result: dict[str, Any]) -> list[tuple[str, alt.Chart]]:
-    """Genera boxplot, scatter apareado e histograma del delta de NLL."""
+def build_lexical_metrics_chart(
+    lexical_results: dict[str, LexicalResult],
+) -> alt.Chart:
+    """Compara F1 macro, MCC y precisión/recall por clase entre BoW y TF-IDF."""
+    metric_specs = [
+        ("f1_macro", "F1 macro"),
+        ("mcc", "MCC"),
+        ("precision_hallucination", "Precisión · alucinación"),
+        ("recall_hallucination", "Recall · alucinación"),
+        ("precision_no_hallucination", "Precisión · veraz"),
+        ("recall_no_hallucination", "Recall · veraz"),
+    ]
+
+    rows = [
+        {
+            "model": result.name,
+            "metric": label,
+            "value": float(result.evaluation["metrics_test"][key]),
+        }
+        for result in lexical_results.values()
+        for key, label in metric_specs
+    ]
+    data = pd.DataFrame(rows)
+
+    return (
+        alt.Chart(data)
+        .mark_bar()
+        .encode(
+            x=alt.X(
+                "metric:N",
+                sort=[label for _, label in metric_specs],
+                title=None,
+                axis=alt.Axis(labelAngle=-25),
+            ),
+            xOffset=alt.X(
+                "model:N", sort=[result.name for result in lexical_results.values()]
+            ),
+            y=alt.Y("value:Q", scale=alt.Scale(domain=[0, 1]), title="Valor en test"),
+            color=alt.Color(
+                "model:N",
+                scale=alt.Scale(
+                    domain=["Bag-of-Words", "TF-IDF"],
+                    range=[COLOR_BOW, COLOR_TFIDF],
+                ),
+                title=None,
+            ),
+            tooltip=[
+                alt.Tooltip("model:N", title="Modelo"),
+                alt.Tooltip("metric:N", title="Métrica"),
+                alt.Tooltip("value:Q", format=".4f", title="Valor"),
+            ],
+        )
+        .properties(
+            title="Exp. 1 — Comparación léxica: Bag-of-Words vs. TF-IDF",
+            width=640,
+            height=360,
+        )
+        .configure_axis(labelFontSize=11, titleFontSize=12)
+        .configure_legend(labelFontSize=11, titleFontSize=11)
+    )
+
+
+def build_perplexity_plots(
+    table: pd.DataFrame, stats_result: dict[str, Any]
+) -> list[tuple[str, alt.Chart]]:
+    """Genera el boxplot de sorpresa (NLL) y el histograma de su diferencia."""
     rng = np.random.default_rng(SEED)
 
     long = table.melt(
@@ -979,7 +994,7 @@ def build_perplexity_plots(table: pd.DataFrame, stats_result: dict[str, Any]) ->
         extent="min-max", size=46, median={"color": "black"}
     ).encode(
         x=alt.X("corpus:N", title=None),
-        y=alt.Y("mean_nll:Q", title="NLL medio por token (nats) — menor = más predecible"),
+        y=alt.Y("mean_nll:Q", title="Sorpresa del modelo (NLL por token)"),
         color=alt.Color("corpus:N", scale=corpus_scale, legend=None),
     )
     points = alt.Chart(long).mark_circle(size=18, opacity=0.35).encode(
@@ -990,46 +1005,18 @@ def build_perplexity_plots(table: pd.DataFrame, stats_result: dict[str, Any]) ->
         tooltip=[
             alt.Tooltip("doc_id:N", title="Documento"),
             alt.Tooltip("corpus:N", title="Corpus"),
-            alt.Tooltip("mean_nll:Q", format=".4f", title="NLL medio"),
+            alt.Tooltip("mean_nll:Q", format=".4f", title="Sorpresa (NLL media)"),
         ],
     )
     boxplot_chart = (box + points).properties(
         title=alt.TitleParams(
-            text="Exp. 1 — Perplejidad por token: alucinación vs. texto veraz",
+            text="Exp. 1 — Sorpresa del modelo por documento: alucinación vs. veraz",
             subtitle=(
                 f"n={stats_result['n_documents_paired']} documentos · "
-                f"PPL media A={stats_result['mean_ppl_a']:.1f} vs B={stats_result['mean_ppl_b']:.1f} · "
-                f"t apareado p={stats_result['paired_ttest']['p_value']:.2e}"
+                f"Perplejidad media A={stats_result['mean_ppl_a']:.2f} vs "
+                f"B={stats_result['mean_ppl_b']:.2f} · "
+                f"t apareado p={stats_result['paired_ttest']['p_value']:.3e}"
             ),
-        ),
-        width=460,
-        height=380,
-    )
-
-    min_value = float(min(table["mean_nll_a"].min(), table["mean_nll_b"].min()))
-    max_value = float(max(table["mean_nll_a"].max(), table["mean_nll_b"].max()))
-    identity = pd.DataFrame({"x": [min_value, max_value], "y": [min_value, max_value]})
-
-    scatter = alt.Chart(table).mark_circle(size=38, opacity=0.65).encode(
-        x=alt.X("mean_nll_b:Q", title="NLL medio · Corpus B (veraz)"),
-        y=alt.Y("mean_nll_a:Q", title="NLL medio · Corpus A (alucinado)"),
-        color=alt.condition(
-            alt.datum.delta_nll > 0, alt.value(COLOR_HALLUCINATION), alt.value(COLOR_TRUTHFUL)
-        ),
-        tooltip=[
-            alt.Tooltip("doc_id:N", title="Documento"),
-            alt.Tooltip("mean_nll_a:Q", format=".4f", title="NLL A"),
-            alt.Tooltip("mean_nll_b:Q", format=".4f", title="NLL B"),
-            alt.Tooltip("delta_nll:Q", format=".4f", title="Δ NLL (A-B)"),
-        ],
-    )
-    identity_line = alt.Chart(identity).mark_line(
-        color="gray", strokeDash=[5, 5]
-    ).encode(x="x:Q", y="y:Q")
-    scatter_chart = (scatter + identity_line).properties(
-        title=alt.TitleParams(
-            text="Exp. 1 — NLL apareada por documento",
-            subtitle="Puntos por encima de la diagonal: tokens alucinados menos predecibles que los veraces",
         ),
         width=460,
         height=380,
@@ -1042,18 +1029,17 @@ def build_perplexity_plots(table: pd.DataFrame, stats_result: dict[str, Any]) ->
         x=alt.X(
             "delta_nll:Q",
             bin=alt.Bin(maxbins=40),
-            title="Δ NLL = A − B (nats/token)",
+            title="Diferencia de sorpresa = Alucinación − Veraz (NLL por token)",
         ),
         y=alt.Y("count():Q", title="Documentos"),
         tooltip=[alt.Tooltip("count():Q", title="Documentos")],
     )
     histogram_chart = (histogram + zero_rule).properties(
         title=alt.TitleParams(
-            text="Exp. 1 — Distribución del Δ NLL por documento",
+            text="Exp. 1 — Diferencia de sorpresa (Alucinación − Veraz)",
             subtitle=(
-                f"Δ medio={stats_result['mean_delta_nll']:.4f} nats/token "
-                f"(IC 95 %: {stats_result['delta_nll_ci95_low']:.4f} a "
-                f"{stats_result['delta_nll_ci95_high']:.4f})"
+                "Diferencia media="
+                f"{float(table['delta_nll'].mean()):+.4f} NLL por token"
             ),
         ),
         width=560,
@@ -1062,21 +1048,31 @@ def build_perplexity_plots(table: pd.DataFrame, stats_result: dict[str, Any]) ->
 
     return [
         ("exp1_perplexity_boxplot", boxplot_chart),
-        ("exp1_perplexity_paired_scatter", scatter_chart),
         ("exp1_perplexity_delta_histogram", histogram_chart),
     ]
+
+
+def lexical_result_summary(result: LexicalResult) -> dict[str, Any]:
+    """Resume un modelo léxico para el JSON, sin estadística extra."""
+    return {
+        "model": result.name,
+        "vectorizer": result.vectorizer_name,
+        **result.evaluation,
+        "top_features": result.top_features[
+            ["feature", "coefficient", "abs_coefficient", "direction"]
+        ].to_dict(orient="records"),
+    }
 
 
 def export_results(
     df: pd.DataFrame,
     segments: pd.DataFrame,
-    lexical: LexicalResult,
+    lexical_results: dict[str, LexicalResult],
     perplexity_table: pd.DataFrame | None,
     perplexity_stats: dict[str, Any] | None,
     perplexity_metadata: dict[str, Any] | None,
     graphs_dir: Path,
     results_dir: Path,
-    n_bootstrap: int,
     save_png: bool,
 ) -> dict[str, Any]:
     """Guarda CSV/JSON y gráficos; devuelve el resumen consolidado."""
@@ -1087,17 +1083,25 @@ def export_results(
     segments.to_csv(
         results_dir / "exp1_segments.csv", index=False, encoding="utf-8-sig"
     )
-    lexical.top_features.to_csv(
-        results_dir / "exp1_top_features.csv", index=False, encoding="utf-8-sig"
-    )
+    for key, result in lexical_results.items():
+        result.top_features.to_csv(
+            results_dir / f"exp1_top_features_{key}.csv",
+            index=False,
+            encoding="utf-8-sig",
+        )
 
     # --- Gráficos léxicos --------------------------------------------------
-    top_chart = build_top_features_chart(
-        lexical.top_features, lexical.coef_ttest, n_bootstrap
-    )
-    save_chart(top_chart, "exp1_top_features", graphs_dir, save_png=save_png)
+    generated_charts: list[str] = []
 
-    generated_charts = ["exp1_top_features.html"]
+    metrics_chart = build_lexical_metrics_chart(lexical_results)
+    save_chart(metrics_chart, "exp1_lexical_metrics", graphs_dir, save_png=save_png)
+    generated_charts.append("exp1_lexical_metrics.html")
+
+    for key, result in lexical_results.items():
+        top_chart = build_top_features_chart(result.top_features, result.name)
+        stem = f"exp1_top_features_{key}"
+        save_chart(top_chart, stem, graphs_dir, save_png=save_png)
+        generated_charts.append(f"{stem}.html")
 
     # --- Perplejidad -------------------------------------------------------
     if perplexity_table is not None and perplexity_stats is not None:
@@ -1109,6 +1113,8 @@ def export_results(
         for stem, chart in build_perplexity_plots(perplexity_table, perplexity_stats):
             save_chart(chart, stem, graphs_dir, save_png=save_png)
             generated_charts.append(f"{stem}.html")
+
+    first_result = next(iter(lexical_results.values()))
 
     # --- Resumen JSON ------------------------------------------------------
     summary: dict[str, Any] = {
@@ -1126,23 +1132,12 @@ def export_results(
         "corpora": {
             "n_segments_a": int((segments["corpus"] == "A").sum()),
             "n_segments_b": int((segments["corpus"] == "B").sum()),
-            "n_segments_used_tfidf": int(len(lexical.segments)),
-            "n_documents_used_tfidf": int(lexical.segments["doc_id"].nunique()),
+            "n_segments_used_lexical": int(len(first_result.segments)),
+            "n_documents_used_lexical": int(first_result.segments["doc_id"].nunique()),
         },
-        "tfidf": {
-            **lexical.evaluation,
-            "n_features_full_fit": int(len(lexical.coefficients)),
-            "coefficient_ttest": lexical.coef_ttest,
-            "top_features": lexical.top_features[
-                [
-                    "feature",
-                    "coefficient",
-                    "ci_low",
-                    "ci_high",
-                    "direction",
-                    "significant_95ci",
-                ]
-            ].to_dict(orient="records"),
+        "lexical": {
+            "bow": lexical_result_summary(lexical_results["bow"]),
+            "tfidf": lexical_result_summary(lexical_results["tfidf"]),
         },
         "perplexity": {
             **(perplexity_metadata or {}),
@@ -1165,49 +1160,57 @@ def export_results(
 # 5. Presentación por consola
 # ---------------------------------------------------------------------------
 
-def print_lexical_results(lexical: LexicalResult, n_bootstrap: int) -> None:
-    print_section("[2/3] ANÁLISIS LÉXICO — TF-IDF + LOGISTIC REGRESSION")
+def print_lexical_results(lexical_results: dict[str, LexicalResult]) -> None:
+    print_section("[2/3] ANÁLISIS LÉXICO — BAG-OF-WORDS Y TF-IDF")
 
-    evaluation = lexical.evaluation
-    print(
-        f"  Split agrupado por documento: "
-        f"{evaluation['n_train_documents']} docs train / "
-        f"{evaluation['n_test_documents']} docs test"
-    )
-    print(
-        f"  Segmentos: {evaluation['n_train_segments']} train / "
-        f"{evaluation['n_test_segments']} test"
-    )
-    print(f"  Vocabulario (fit de evaluación): {evaluation['vocabulary_size_eval']:,} features")
-    print(f"  F1 macro en test: {evaluation['macro_f1_test']:.4f}")
-    print(
-        "  Test t de una muestra sobre TODOS los coeficientes "
-        f"(H0: media=0): t={lexical.coef_ttest['t_statistic']:.3f}, "
-        f"p={lexical.coef_ttest['p_value']:.3e}, "
-        f"n_features={lexical.coef_ttest['n_features']:,}"
-    )
-    print(
-        "  Nota: el t-test describe la distribución global de pesos; "
-        "la evidencia por feature son los IC bootstrap."
-    )
+    for result in lexical_results.values():
+        evaluation = result.evaluation
+        metrics = evaluation["metrics_test"]
+        matrix = metrics["confusion_matrix"]
 
-    display = lexical.top_features.copy()
-    display["coef"] = display["coefficient"].map(lambda value: f"{value:+.4f}")
-    display["IC 95%"] = display.apply(
-        lambda row: f"[{row['ci_low']:+.4f}, {row['ci_high']:+.4f}]", axis=1
-    )
-    display["sig."] = np.where(display["significant_95ci"], "sí", "no")
-    print(f"\n  Top 15 features por |coeficiente| "
-          f"(bootstrap={n_bootstrap} remuestreos):")
-    print(
-        display[["feature", "coef", "IC 95%", "direction", "sig."]]
-        .rename(columns={"feature": "feature", "direction": "dirección"})
-        .to_string(index=False)
-    )
+        print(f"\n  === {result.name} ({result.vectorizer_name}) ===")
+        print(
+            f"  Split agrupado por documento: "
+            f"{evaluation['n_train_documents']} docs train / "
+            f"{evaluation['n_test_documents']} docs test"
+        )
+        print(
+            f"  Segmentos: {evaluation['n_train_segments']} train / "
+            f"{evaluation['n_test_segments']} test"
+        )
+        print(
+            f"  Vocabulario (fit de evaluación): "
+            f"{evaluation['vocabulary_size_eval']:,} features"
+        )
+        print(f"  F1 macro en test: {metrics['f1_macro']:.4f}")
+        print(f"  MCC en test: {metrics['mcc']:.4f}")
+        print(
+            f"  Alucinación: precisión={metrics['precision_hallucination']:.4f}, "
+            f"recall={metrics['recall_hallucination']:.4f}"
+        )
+        print(
+            f"  Veraz: precisión={metrics['precision_no_hallucination']:.4f}, "
+            f"recall={metrics['recall_no_hallucination']:.4f}"
+        )
+        print(
+            f"  Matriz de confusión: TN={matrix['tn']}, FP={matrix['fp']}, "
+            f"FN={matrix['fn']}, TP={matrix['tp']}"
+        )
+
+        display = result.top_features.copy()
+        display["coef"] = display["coefficient"].map(lambda value: f"{value:+.4f}")
+        print("\n  Top 15 palabras por |coeficiente|:")
+        print(
+            display[["feature", "coef", "direction"]]
+            .rename(columns={"feature": "palabra", "direction": "dirección"})
+            .to_string(index=False)
+        )
 
 
-def print_perplexity_results(metadata: dict[str, Any], stats_result: dict[str, Any]) -> None:
-    print("\n  Resultados del test apareado:")
+def print_perplexity_results(
+    metadata: dict[str, Any], stats_result: dict[str, Any]
+) -> None:
+    print("\n  Resultados de perplejidad:")
 
     print(
         f"  Documentos procesados: {metadata['n_documents_processed']} | "
@@ -1220,34 +1223,17 @@ def print_perplexity_results(metadata: dict[str, Any], stats_result: dict[str, A
         f"B={stats_result['n_tokens_b_total']:,}"
     )
     print(
-        f"  Perplejidad media por documento (exp de la NLL media): "
-        f"A={stats_result['mean_ppl_a']:.2f} | B={stats_result['mean_ppl_b']:.2f}"
+        f"  NLL media: A={stats_result['mean_nll_a']:.4f} | "
+        f"B={stats_result['mean_nll_b']:.4f}"
     )
     print(
-        f"  Perplejidad agregada por token: "
-        f"A={stats_result['pooled_ppl_a']:.2f} | B={stats_result['pooled_ppl_b']:.2f}"
+        f"  Perplejidad media: A={stats_result['mean_ppl_a']:.2f} | "
+        f"B={stats_result['mean_ppl_b']:.2f}"
     )
     print(
-        f"  Perplejidad mediana: "
-        f"A={stats_result['median_ppl_a']:.2f} | B={stats_result['median_ppl_b']:.2f}"
-    )
-    print(
-        f"  Δ NLL medio (A-B): {stats_result['mean_delta_nll']:+.4f} nats/token "
-        f"(IC 95 %: {stats_result['delta_nll_ci95_low']:+.4f} a "
-        f"{stats_result['delta_nll_ci95_high']:+.4f})"
-    )
-    print(
-        f"  T-test apareado: t={stats_result['paired_ttest']['t_statistic']:.3f}, "
+        f"  T-test apareado: t={stats_result['paired_ttest']['t_statistic']:.4f}, "
         f"gl={stats_result['paired_ttest']['degrees_of_freedom']}, "
-        f"p={stats_result['paired_ttest']['p_value']:.3e}"
-    )
-    print(
-        f"  Cohen's d (pareado): {stats_result['cohens_d_paired']:.3f} | "
-        f"Wilcoxon p={stats_result['wilcoxon_p_value']:.3e}"
-    )
-    print(
-        f"  Documentos con A más sorprendente que B: "
-        f"{stats_result['fraction_docs_a_more_surprising']:.1%}"
+        f"p={stats_result['paired_ttest']['p_value']:.4f}"
     )
 
 
@@ -1259,8 +1245,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     root = project_root()
     parser = argparse.ArgumentParser(
         description=(
-            "Experimento 1: análisis léxico (TF-IDF + LogReg) y de perplejidad "
-            "(LM causal) de segmentos alucinados vs. veraces en Mu-SHROOM."
+            "Experimento 1: análisis léxico (Bag-of-Words y TF-IDF + LogReg) y "
+            "de perplejidad (LM causal) de segmentos alucinados vs. veraces "
+            "en Mu-SHROOM."
         ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
@@ -1306,12 +1293,6 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         type=int,
         default=2,
         help="Mínimo de tokens A y B por documento para el test apareado.",
-    )
-    parser.add_argument(
-        "--bootstrap",
-        type=int,
-        default=200,
-        help="Remuestreos bootstrap para los coeficientes (0 = desactivar).",
     )
     parser.add_argument(
         "--skip-perplexity",
@@ -1382,13 +1363,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"  Documentos representados: {segments['doc_id'].nunique()}")
 
     # ------------------------------------------------------------------ [2/3]
-    lexical = fit_and_interpret_tfidf(
+    lexical_results = run_lexical_analysis(
         segments=segments,
         seed=args.seed,
-        n_bootstrap=args.bootstrap,
         top_k=15,
     )
-    print_lexical_results(lexical, args.bootstrap)
+    print_lexical_results(lexical_results)
 
     # ------------------------------------------------------------------ [3/3]
     perplexity_table: pd.DataFrame | None = None
@@ -1414,13 +1394,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     summary = export_results(
         df=df,
         segments=segments,
-        lexical=lexical,
+        lexical_results=lexical_results,
         perplexity_table=perplexity_table,
         perplexity_stats=perplexity_stats,
         perplexity_metadata=perplexity_metadata,
         graphs_dir=args.graphs_dir,
         results_dir=args.results_dir,
-        n_bootstrap=args.bootstrap,
         save_png=args.save_png,
     )
 
@@ -1431,7 +1410,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"  Resultados: {summary['outputs']['results_dir']}")
     for filename in (
         "exp1_segments.csv",
-        "exp1_top_features.csv",
+        "exp1_top_features_bow.csv",
+        "exp1_top_features_tfidf.csv",
         "exp1_perplexity_per_document.csv",
         "exp1_summary.json",
     ):
@@ -1478,12 +1458,14 @@ if __name__ == "__main__":
 #       python experiments/exp1_lexical_perplexity.py --save-png
 #
 # Salidas:
-#   graphs/exp1/exp1_top_features.html
+#   graphs/exp1/exp1_lexical_metrics.html
+#   graphs/exp1/exp1_top_features_bow.html
+#   graphs/exp1/exp1_top_features_tfidf.html
 #   graphs/exp1/exp1_perplexity_boxplot.html
-#   graphs/exp1/exp1_perplexity_paired_scatter.html
 #   graphs/exp1/exp1_perplexity_delta_histogram.html
 #   results/exp1/exp1_segments.csv
-#   results/exp1/exp1_top_features.csv
+#   results/exp1/exp1_top_features_bow.csv
+#   results/exp1/exp1_top_features_tfidf.csv
 #   results/exp1/exp1_perplexity_per_document.csv
 #   results/exp1/exp1_summary.json
 # -----------------------------------------------------------------------------

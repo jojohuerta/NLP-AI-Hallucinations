@@ -14,7 +14,8 @@ por los scripts.
 
 | Experimento | Método | Métrica principal | Resultado |
 |---|---|---|---|
-| 1 | TF-IDF + LogReg sobre segmentos | F1 macro | **0,6491** |
+| 1 | Bag-of-Words + LogReg sobre segmentos | F1 macro / MCC | **0,6406 / 0,3463** |
+| 1 | TF-IDF + LogReg sobre segmentos | F1 macro / MCC | **0,6491 / 0,3303** |
 | 1 | GPT-2, perplejidad dentro vs. fuera de spans | t-test apareado | **p = 0,985** (sin diferencia) |
 | 2 | TF-IDF + LogReg, Mu-SHROOM vs. Phantom | F1 macro / MCC | **0,9833 / 0,9672** |
 | 2 | DistilBERT fine-tuned | F1 macro / MCC | **1,0000 / 1,0000** |
@@ -46,50 +47,85 @@ propuestos.
 | Documentos con al menos un span | 197 |
 | Segmentos alucinados (Corpus A) | 609 |
 | Segmentos veraces (Corpus B) | 599 |
-| Segmentos usados en TF-IDF | 797 |
-| Documentos representados en TF-IDF | 185 |
+| Segmentos usados en el análisis léxico | 797 |
+| Documentos representados en el análisis léxico | 185 |
 
-### TF-IDF + LogisticRegression
+### Análisis léxico: Bag-of-Words vs. TF-IDF
 
-| Métrica | Valor |
+Ambos modelos usan exactamente el mismo conjunto de segmentos y el mismo split
+agrupado por documento (`GroupShuffleSplit` por `doc_id`, `test_size=0.25`),
+`LogisticRegression` con `class_weight="balanced"` y la misma configuración de
+vectorizador (unigramas + bigramas, `min_df=2`, `max_df=0.95`, stopwords en
+inglés).
+
+| Dato | Valor |
 |---|---|
 | Segmentos de train | 623 (138 documentos) |
 | Segmentos de test | 174 (47 documentos) |
-| F1 macro en test | **0,6491** |
+| Composición del test | 98 veraces (B) / 76 alucinados (A) |
 | Vocabulario de evaluación | 692 |
 | Features del ajuste completo | 892 |
 
-**Test de coeficientes (una muestra, 892 features):**
+**Métricas en test:**
 
-| Estadístico | Valor |
-|---|---|
-| t | −3,5085 |
-| p | **0,000473** |
-| Coeficiente medio | −0,0436 |
-| Desvío de coeficientes | 0,3714 |
+| Métrica | Bag-of-Words | TF-IDF |
+|---|---:|---:|
+| F1 macro | **0,6406** | **0,6491** |
+| MCC | **0,3463** | **0,3303** |
+| Precisión · alucinación (A) | 0,5614 | 0,5728 |
+| Recall · alucinación (A) | 0,8421 | 0,7763 |
+| Precisión · veraz (B) | 0,8000 | 0,7606 |
+| Recall · veraz (B) | 0,4898 | 0,5510 |
+
+**Matriz de confusión en test:**
+
+| Modelo | TN | FP | FN | TP |
+|---|---:|---:|---:|---:|
+| Bag-of-Words | 48 | 50 | 12 | 64 |
+| TF-IDF | 54 | 44 | 17 | 59 |
 
 Los coeficientes negativos empujan hacia el Corpus B (veraz) y los positivos
 hacia el Corpus A (alucinación).
 
-**Top features (coeficiente y IC bootstrap al 95 %):**
+**Top 15 de Bag-of-Words por |coeficiente|:**
 
-| Feature | Coeficiente | IC 95 % | Dirección | IC significativo |
-|---|---:|---|---|---|
-| `located` | −1,8824 | [−2,0717, −1,2712] | B (veraz) | Sí |
-| `population` | −1,3279 | [−1,6243, −0,6402] | B (veraz) | Sí |
-| `won` | −1,3223 | [−1,6269, −0,3741] | B (veraz) | Sí |
-| `born` | −1,3071 | [−1,6104, −0,5824] | B (veraz) | Sí |
-| `called` | −1,2004 | [−1,4030, −0,5157] | B (veraz) | Sí |
-| `released` | −1,1978 | [−1,4480, 0,0000] | B (veraz) | No |
-| `known` | −1,1665 | [−1,5663, −0,3085] | B (veraz) | Sí |
-| `total` | −1,1410 | [−1,4025, −0,3784] | B (veraz) | Sí |
-| `bc` | 1,0412 | [0,1255, 1,3849] | A (alucinación) | Sí |
-| `march` | 0,9776 | [0,4682, 1,1952] | A (alucinación) | Sí |
-| `species` | −0,9626 | [−1,3198, −0,2103] | B (veraz) | Sí |
-| `yes` | −0,9508 | [−1,4357, 0,0698] | B (veraz) | No |
-| `club` | −0,9303 | [−1,0941, 0,0000] | B (veraz) | No |
-| `bmw` | −0,9140 | [−1,6152, 0,0000] | B (veraz) | No |
-| `23` | 0,8669 | [0,0000, 1,0842] | A (alucinación) | No |
+| Palabra | Coeficiente | Dirección |
+|---|---:|---|
+| `located` | −1,5871 | B (veraz) |
+| `population` | −1,4094 | B (veraz) |
+| `born` | −1,3560 | B (veraz) |
+| `released` | −1,3172 | B (veraz) |
+| `called` | −1,2649 | B (veraz) |
+| `won` | −1,2383 | B (veraz) |
+| `total` | −1,1765 | B (veraz) |
+| `yes` | −1,1381 | B (veraz) |
+| `known` | −1,0369 | B (veraz) |
+| `club` | −1,0198 | B (veraz) |
+| `march` | 0,9840 | A (alucinación) |
+| `question` | −0,9465 | B (veraz) |
+| `olympics` | −0,9331 | B (veraz) |
+| `emperor` | −0,9024 | B (veraz) |
+| `small` | 0,8983 | A (alucinación) |
+
+**Top 15 de TF-IDF por |coeficiente|:**
+
+| Palabra | Coeficiente | Dirección |
+|---|---:|---|
+| `located` | −1,8824 | B (veraz) |
+| `population` | −1,3279 | B (veraz) |
+| `won` | −1,3223 | B (veraz) |
+| `born` | −1,3071 | B (veraz) |
+| `called` | −1,2004 | B (veraz) |
+| `released` | −1,1978 | B (veraz) |
+| `known` | −1,1665 | B (veraz) |
+| `total` | −1,1410 | B (veraz) |
+| `bc` | 1,0412 | A (alucinación) |
+| `march` | 0,9776 | A (alucinación) |
+| `species` | −0,9626 | B (veraz) |
+| `yes` | −0,9508 | B (veraz) |
+| `club` | −0,9303 | B (veraz) |
+| `bmw` | −0,9140 | B (veraz) |
+| `23` | 0,8669 | A (alucinación) |
 
 ### Perplejidad con GPT-2
 
@@ -108,39 +144,34 @@ hacia el Corpus A (alucinación).
 | NLL media B | 3,9060 |
 | Perplejidad media A | **49,8129** |
 | Perplejidad media B | **49,6983** |
-| Perplejidad pooled A | 30,7933 |
-| Perplejidad pooled B | 24,3910 |
-| Perplejidad mediana A | 38,5957 |
-| Perplejidad mediana B | 35,9608 |
 
 **Test apareado a nivel documento (167 documentos):**
 
 | Estadístico | Valor |
 |---|---|
-| Delta NLL medio (A − B) | 0,0023 |
-| IC 95 % del delta | [−0,2416, 0,2462] |
 | t | 0,0187 |
 | p | **0,9851** |
 | Grados de libertad | 166 |
-| Cohen's d apareado | 0,00144 |
-| Wilcoxon p | 0,7933 |
-| Documentos donde A es más sorprendente | 53,29 % |
 
-**Lectura:** hay una señal léxica modesta (F1 0,65), pero la perplejidad de GPT-2
-no distingue tokens alucinados de veraces. El delta es prácticamente cero y el
-IC cruza ampliamente el cero.
+**Lectura:** tanto BoW como TF-IDF alcanzan una señal léxica modesta (F1 ≈ 0,64–
+0,65, MCC ≈ 0,33–0,35), con más recall que precisión sobre las alucinaciones. La
+perplejidad de GPT-2, en cambio, no distingue tokens alucinados de veraces: las
+medias son casi idénticas y el t-test apareado no rechaza la igualdad
+(p ≈ 0,985).
 
 ### Archivos generados
 
 ```text
 results/exp1/exp1_segments.csv
-results/exp1/exp1_top_features.csv
+results/exp1/exp1_top_features_bow.csv
+results/exp1/exp1_top_features_tfidf.csv
 results/exp1/exp1_perplexity_per_document.csv
 results/exp1/exp1_summary.json
 
-graphs/exp1/exp1_top_features.html
+graphs/exp1/exp1_lexical_metrics.html
+graphs/exp1/exp1_top_features_bow.html
+graphs/exp1/exp1_top_features_tfidf.html
 graphs/exp1/exp1_perplexity_boxplot.html
-graphs/exp1/exp1_perplexity_paired_scatter.html
 graphs/exp1/exp1_perplexity_delta_histogram.html
 ```
 
