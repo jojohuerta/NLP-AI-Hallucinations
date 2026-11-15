@@ -23,12 +23,10 @@ Sobre una muestra balanceada de Phantom_Hallucination_Detection:
 Métricas principales
 --------------------
 * F1 macro.
-* F1 de la clase "alucinación".
+* F1 de la clase "alucinación" y F1 de la clase "sin alucinación".
 * Precisión y recall por clase.
 * MCC (Matthews Correlation Coefficient).
 * Matriz de confusión.
-* Intervalos de confianza bootstrap al 95 % para F1 macro y MCC.
-* Test de McNemar entre baseline y LLM.
 
 Decisiones metodológicas
 ------------------------
@@ -80,13 +78,11 @@ import altair as alt
 import numpy as np
 import pandas as pd
 from datasets import load_dataset
-from scipy import stats
 from sklearn.metrics import (
     confusion_matrix,
     f1_score,
     matthews_corrcoef,
     precision_recall_fscore_support,
-    roc_auc_score,
 )
 from sklearn.model_selection import StratifiedGroupKFold
 
@@ -570,7 +566,7 @@ def binary_metrics(
     cm = confusion_matrix(y_true, y_pred, labels=labels)
     tn, fp, fn, tp = cm.ravel()
 
-    precision, recall, f1, support = precision_recall_fscore_support(
+    precision, recall, f1, _ = precision_recall_fscore_support(
         y_true,
         y_pred,
         labels=labels,
@@ -591,8 +587,6 @@ def binary_metrics(
         "recall_hallucination": float(recall[1]),
         "precision_no_hallucination": float(precision[0]),
         "recall_no_hallucination": float(recall[0]),
-        "support_hallucination": int(support[1]),
-        "support_no_hallucination": int(support[0]),
         "mcc": float(matthews_corrcoef(y_true, y_pred)),
         "confusion_matrix": {
             "tn": int(tn),
@@ -600,83 +594,6 @@ def binary_metrics(
             "fn": int(fn),
             "tp": int(tp),
         },
-    }
-
-
-def safe_roc_auc(y_true: Sequence[int], scores: Sequence[float]) -> float:
-    y_true = np.asarray(y_true, dtype=int)
-    scores = np.asarray(scores, dtype=float)
-    if len(np.unique(y_true)) < 2 or len(np.unique(scores)) < 2:
-        return float("nan")
-    return float(roc_auc_score(y_true, scores))
-
-
-def bootstrap_ci(
-    y_true: Sequence[int],
-    y_pred: Sequence[int],
-    n_boot: int = 1000,
-    seed: int = SEED,
-    alpha: float = 0.05,
-) -> dict[str, float]:
-    """IC percentil bootstrap para F1 macro y MCC."""
-    y_true = np.asarray(y_true, dtype=int)
-    y_pred = np.asarray(y_pred, dtype=int)
-    n = len(y_true)
-    if n == 0 or n_boot <= 0:
-        return {
-            "f1_macro_ci_low": float("nan"),
-            "f1_macro_ci_high": float("nan"),
-            "mcc_ci_low": float("nan"),
-            "mcc_ci_high": float("nan"),
-        }
-
-    rng = np.random.default_rng(seed)
-    f1_values = np.empty(n_boot, dtype=float)
-    mcc_values = np.empty(n_boot, dtype=float)
-    for i in range(n_boot):
-        idx = rng.integers(0, n, size=n)
-        f1_values[i] = f1_score(
-            y_true[idx], y_pred[idx], average="macro", zero_division=0
-        )
-        mcc_values[i] = matthews_corrcoef(y_true[idx], y_pred[idx])
-
-    lower = 100 * (alpha / 2)
-    upper = 100 * (1 - alpha / 2)
-    return {
-        "f1_macro_ci_low": float(np.percentile(f1_values, lower)),
-        "f1_macro_ci_high": float(np.percentile(f1_values, upper)),
-        "mcc_ci_low": float(np.percentile(mcc_values, lower)),
-        "mcc_ci_high": float(np.percentile(mcc_values, upper)),
-    }
-
-
-def mcnemar_test(
-    y_true: Sequence[int],
-    predictions_a: Sequence[int],
-    predictions_b: Sequence[int],
-) -> dict[str, Any]:
-    """Test exacto de McNemar sobre los pares discordantes."""
-    y_true = np.asarray(y_true, dtype=int)
-    predictions_a = np.asarray(predictions_a, dtype=int)
-    predictions_b = np.asarray(predictions_b, dtype=int)
-
-    correct_a = predictions_a == y_true
-    correct_b = predictions_b == y_true
-
-    only_a = int(np.sum(correct_a & ~correct_b))
-    only_b = int(np.sum(~correct_a & correct_b))
-    discordant = only_a + only_b
-
-    if discordant == 0:
-        p_value = 1.0
-    else:
-        p_value = float(stats.binomtest(only_a, discordant, 0.5).pvalue)
-
-    return {
-        "a_correct_b_wrong": only_a,
-        "b_correct_a_wrong": only_b,
-        "discordant": discordant,
-        "p_value": p_value,
     }
 
 
@@ -1110,6 +1027,7 @@ def build_split_balance_chart(df: pd.DataFrame) -> alt.Chart:
                 "split_name:N",
                 title=None,
                 sort=list(SPLIT_NAMES.values()),
+                axis=alt.Axis(labelAngle=0),
             ),
             xOffset=alt.X("label_name:N", title=None, sort=list(LABEL_NAMES.values())),
             y=alt.Y("count:Q", title="Cantidad de ejemplos"),
@@ -1134,6 +1052,7 @@ def build_split_balance_chart(df: pd.DataFrame) -> alt.Chart:
             ),
             width=460,
             height=320,
+            padding={"bottom": 20},
         )
     )
 
@@ -1149,7 +1068,12 @@ def build_length_distribution_chart(df: pd.DataFrame) -> alt.Chart:
         alt.Chart(plot_df)
         .mark_boxplot(extent="min-max", size=44, median={"color": "black"})
         .encode(
-            x=alt.X("label_name:N", title=None, sort=list(LABEL_NAMES.values())),
+            x=alt.X(
+                "label_name:N",
+                title=None,
+                sort=list(LABEL_NAMES.values()),
+                axis=alt.Axis(labelAngle=0),
+            ),
             y=alt.Y(
                 "n_words:Q",
                 title="Palabras por respuesta (escala log)",
@@ -1169,7 +1093,12 @@ def build_length_distribution_chart(df: pd.DataFrame) -> alt.Chart:
         alt.Chart(plot_df)
         .mark_circle(size=18, opacity=0.35)
         .encode(
-            x=alt.X("label_name:N", title=None, sort=list(LABEL_NAMES.values())),
+            x=alt.X(
+                "label_name:N",
+                title=None,
+                sort=list(LABEL_NAMES.values()),
+                axis=alt.Axis(labelAngle=0),
+            ),
             xOffset=alt.X("jitter:Q", scale=alt.Scale(domain=[-0.35, 0.35])),
             y=alt.Y("n_words:Q"),
             color=alt.Color(
@@ -1194,6 +1123,7 @@ def build_length_distribution_chart(df: pd.DataFrame) -> alt.Chart:
         ),
         width=460,
         height=360,
+        padding={"bottom": 45},
     )
 
 
@@ -1213,7 +1143,12 @@ def build_entity_risk_chart(df: pd.DataFrame) -> alt.Chart:
         alt.Chart(plot_df)
         .mark_boxplot(extent="min-max", size=42, median={"color": "black"})
         .encode(
-            x=alt.X("label_name:N", title=None, sort=list(LABEL_NAMES.values())),
+            x=alt.X(
+                "label_name:N",
+                title=None,
+                sort=list(LABEL_NAMES.values()),
+                axis=alt.Axis(labelAngle=0),
+            ),
             y=alt.Y(
                 "unsupported_entity_rate:Q",
                 title="Fracción de entidades no respaldadas",
@@ -1233,7 +1168,12 @@ def build_entity_risk_chart(df: pd.DataFrame) -> alt.Chart:
         alt.Chart(plot_df)
         .mark_circle(size=16, opacity=0.30)
         .encode(
-            x=alt.X("label_name:N", title=None, sort=list(LABEL_NAMES.values())),
+            x=alt.X(
+                "label_name:N",
+                title=None,
+                sort=list(LABEL_NAMES.values()),
+                axis=alt.Axis(labelAngle=0),
+            ),
             xOffset=alt.X("jitter:Q", scale=alt.Scale(domain=[-0.35, 0.35])),
             y=alt.Y("unsupported_entity_rate:Q"),
             color=alt.Color(
@@ -1251,13 +1191,38 @@ def build_entity_risk_chart(df: pd.DataFrame) -> alt.Chart:
             ],
         )
     )
-    return (box + points).properties(
+    annotation_df = pd.DataFrame(
+        {
+            "y": [0.90, 0.85, 0.80],
+            "texto": [
+                "En 'Sin alucinación', >75 % de los casos tienen score = 0",
+                "(caja aplastada en el piso). En 'Alucinación', la mediana sigue en 0",
+                "pero el percentil 75 sube a ~0,17 (caja visible).",
+            ],
+        }
+    )
+    annotation = (
+        alt.Chart(annotation_df)
+        .mark_text(
+            align="center",
+            baseline="middle",
+            fontSize=11,
+            color="#333333",
+        )
+        .encode(
+            x=alt.value(230),
+            y=alt.Y("y:Q"),
+            text=alt.Text("texto:N"),
+        )
+    )
+    return (box + points + annotation).properties(
         title=alt.TitleParams(
             text="Exp. 3 — Grounding de entidades por clase",
             subtitle="El baseline etiqueta como alucinación cuando la fracción no respaldada supera un umbral",
         ),
         width=460,
         height=360,
+        padding={"top": 5, "bottom": 45, "left": 5, "right": 5},
     )
 
 
@@ -1292,7 +1257,11 @@ def build_threshold_curve_chart(
         .mark_line(point=False, strokeWidth=2.5)
         .encode(
             x=alt.X("threshold:Q", title=f"Umbral sobre {score_name}"),
-            y=alt.Y("valor:Q", title="Valor en desarrollo", scale=alt.Scale(domain=[0, 1])),
+            y=alt.Y(
+                "valor:Q",
+                title="Valor en desarrollo",
+                scale=alt.Scale(domain=[-0.3, 1.0]),
+            ),
             color=alt.Color(
                 "metrica:N",
                 title="Métrica",
@@ -1344,7 +1313,12 @@ def build_confusion_matrix_chart(metrics: dict[str, Any], model_label: str) -> a
     order = list(LABEL_NAMES.values())
 
     base = alt.Chart(cm_df).encode(
-        x=alt.X("prediccion:N", title="Predicción", sort=order),
+        x=alt.X(
+            "prediccion:N",
+            title="Predicción",
+            sort=order,
+            axis=alt.Axis(labelAngle=0),
+        ),
         y=alt.Y("real:N", title="Etiqueta real", sort=order),
     )
     heatmap = base.mark_rect(cornerRadius=4).encode(
@@ -1374,6 +1348,7 @@ def build_confusion_matrix_chart(metrics: dict[str, Any], model_label: str) -> a
         ),
         width=380,
         height=320,
+        padding={"bottom": 40},
     )
 
 
@@ -1394,7 +1369,7 @@ def build_model_comparison_chart(metrics_by_model: dict[str, dict[str, Any]]) ->
         alt.Chart(plot_df)
         .mark_bar(size=34, cornerRadiusTopLeft=3, cornerRadiusTopRight=3)
         .encode(
-            x=alt.X("modelo:N", title=None),
+            x=alt.X("modelo:N", title=None, axis=alt.Axis(labelAngle=0)),
             xOffset=alt.X(
                 "metrica:N",
                 title=None,
@@ -1427,59 +1402,7 @@ def build_model_comparison_chart(metrics_by_model: dict[str, dict[str, Any]]) ->
         ),
         width=560,
         height=380,
-    )
-
-
-def build_score_vs_length_chart(df: pd.DataFrame) -> alt.Chart:
-    plot_df = df[
-        [
-            "label_name",
-            "n_words",
-            "unsupported_entity_rate",
-            "n_unsupported_entities",
-            "query",
-        ]
-    ].copy()
-    plot_df["query_preview"] = plot_df["query"].astype(str).str.slice(0, 110)
-    plot_df = plot_df.drop(columns=["query"])
-    return (
-        alt.Chart(plot_df)
-        .mark_circle(size=45, opacity=0.65, stroke="white", strokeWidth=0.6)
-        .encode(
-            x=alt.X(
-                "n_words:Q",
-                title="Palabras de la respuesta (escala log)",
-                scale=alt.Scale(type="log"),
-            ),
-            y=alt.Y(
-                "unsupported_entity_rate:Q",
-                title="Fracción de entidades no respaldadas",
-                scale=alt.Scale(domain=[0, 1]),
-            ),
-            color=alt.Color(
-                "label_name:N",
-                title="Clase",
-                scale=alt.Scale(
-                    domain=list(LABEL_NAMES.values()),
-                    range=[COLOR_TRUTHFUL, COLOR_HALLUCINATION],
-                ),
-            ),
-            tooltip=[
-                alt.Tooltip("query_preview:N", title="Query"),
-                alt.Tooltip("label_name:N", title="Clase"),
-                alt.Tooltip("n_words:Q", title="Palabras"),
-                alt.Tooltip("n_unsupported_entities:Q", title="Entidades no respaldadas"),
-                alt.Tooltip("unsupported_entity_rate:Q", format=".2f", title="Fracción"),
-            ],
-        )
-        .properties(
-            title=alt.TitleParams(
-                text="Exp. 3 — Grounding de entidades vs. longitud",
-                subtitle="Si las clases se separan por longitud, el detector puede estar midiendo verbosidad",
-            ),
-            width=600,
-            height=360,
-        )
+        padding={"bottom": 20},
     )
 
 
@@ -1496,7 +1419,11 @@ def build_entity_variants_chart(variants: pd.DataFrame) -> alt.Chart:
                 title=None,
                 sort=alt.SortField(field="variant_order", order="ascending"),
             ),
-            x=alt.X("auc:Q", title="ROC-AUC", scale=alt.Scale(domain=[0, 1])),
+            x=alt.X(
+                "f1_macro:Q",
+                title="F1 macro en test",
+                scale=alt.Scale(domain=[0, 1]),
+            ),
             yOffset=alt.Y("split:N", title="Split"),
             color=alt.Color(
                 "split:N",
@@ -1506,7 +1433,7 @@ def build_entity_variants_chart(variants: pd.DataFrame) -> alt.Chart:
             tooltip=[
                 alt.Tooltip("variant:N", title="Score"),
                 alt.Tooltip("split:N", title="Split"),
-                alt.Tooltip("auc:Q", format=".3f", title="ROC-AUC"),
+                alt.Tooltip("f1_macro:Q", format=".3f", title="F1 macro"),
             ],
         )
         .properties(
@@ -1529,21 +1456,9 @@ def evaluate_model(
     split_name: str,
     y_true: Sequence[int],
     y_pred: Sequence[int],
-    scores: Sequence[float] | None = None,
-    n_boot: int = 1000,
-    seed: int = SEED,
 ) -> dict[str, Any]:
     metrics = binary_metrics(y_true, y_pred)
-    metrics.update(
-        {
-            "model": model_name,
-            "split": split_name,
-            "roc_auc": (
-                safe_roc_auc(y_true, scores) if scores is not None else float("nan")
-            ),
-        }
-    )
-    metrics.update(bootstrap_ci(y_true, y_pred, n_boot=n_boot, seed=seed))
+    metrics.update({"model": model_name, "split": split_name})
     return metrics
 
 
@@ -1561,11 +1476,6 @@ def metrics_row(metrics: dict[str, Any]) -> dict[str, Any]:
         "precision_no_hallucination": metrics["precision_no_hallucination"],
         "recall_no_hallucination": metrics["recall_no_hallucination"],
         "mcc": metrics["mcc"],
-        "roc_auc": metrics["roc_auc"],
-        "f1_macro_ci_low": metrics["f1_macro_ci_low"],
-        "f1_macro_ci_high": metrics["f1_macro_ci_high"],
-        "mcc_ci_low": metrics["mcc_ci_low"],
-        "mcc_ci_high": metrics["mcc_ci_high"],
         "tn": cm["tn"],
         "fp": cm["fp"],
         "fn": cm["fn"],
@@ -1633,7 +1543,6 @@ def export_results(
     graphs_dir: Path,
     results_dir: Path,
     save_png: bool,
-    n_boot: int,
     seed: int,
 ) -> dict[str, Any]:
     results_dir.mkdir(parents=True, exist_ok=True)
@@ -1801,14 +1710,6 @@ def export_results(
     charts.append("exp3_model_comparison.html")
 
     save_chart(
-        build_score_vs_length_chart(sample),
-        "exp3_score_vs_length",
-        graphs_dir,
-        save_png,
-    )
-    charts.append("exp3_score_vs_length.html")
-
-    save_chart(
         build_entity_variants_chart(variants),
         "exp3_entity_variants",
         graphs_dir,
@@ -1817,14 +1718,6 @@ def export_results(
     charts.append("exp3_entity_variants.html")
 
     # --- Resumen JSON ------------------------------------------------------
-    mcnemar: dict[str, Any] | None = None
-    if llm_result is not None:
-        mcnemar = mcnemar_test(
-            test_df["label"].to_numpy(dtype=int),
-            baseline["test_predictions"],
-            llm_result["test_predictions"],
-        )
-
     summary: dict[str, Any] = {
         "experiment": "exp3_logical_consistency",
         "seed": seed,
@@ -1862,7 +1755,6 @@ def export_results(
         },
         "entity_variants": variants.to_dict(orient="records"),
         "llm": None,
-        "mcnemar_baseline_vs_llm": mcnemar,
         "limitations": {
             "length_confound": True,
             "message": (
@@ -1910,7 +1802,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         description=(
             "Experimento 3: consistencia lógica en Phantom. Baseline de "
             "grounding de entidades con spaCy vs. LLM few-shot. Reporta F1 "
-            "macro, MCC, matrices de confusión e IC bootstrap."
+            "macro, F1 por clase, precisión, recall, MCC y matrices de confusión."
         ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
@@ -2009,12 +1901,6 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Directorio de resultados.",
     )
     parser.add_argument(
-        "--bootstrap",
-        type=int,
-        default=1000,
-        help="Remuestreos bootstrap para los intervalos de confianza.",
-    )
-    parser.add_argument(
         "--save-png",
         action="store_true",
         help="Exportar también PNG (requiere vl-convert-python).",
@@ -2045,7 +1931,6 @@ def compute_variants(
                 "column": column,
                 "threshold": float(threshold),
                 "split": "dev",
-                "auc": safe_roc_auc(dev_df["label"], dev_df[column]),
                 "f1_macro": binary_metrics(dev_df["label"], dev_pred)["f1_macro"],
                 "mcc": binary_metrics(dev_df["label"], dev_pred)["mcc"],
             }
@@ -2056,7 +1941,6 @@ def compute_variants(
                 "column": column,
                 "threshold": float(threshold),
                 "split": "test",
-                "auc": safe_roc_auc(test_df["label"], test_df[column]),
                 "f1_macro": binary_metrics(test_df["label"], test_pred)["f1_macro"],
                 "mcc": binary_metrics(test_df["label"], test_pred)["mcc"],
             }
@@ -2066,12 +1950,12 @@ def compute_variants(
     if output.empty:
         return output
 
-    test_auc = (
+    test_f1 = (
         output[output["split"] == "test"]
-        .set_index("variant")["auc"]
+        .set_index("variant")["f1_macro"]
         .sort_values(ascending=False)
     )
-    order = {variant: position for position, variant in enumerate(test_auc.index)}
+    order = {variant: position for position, variant in enumerate(test_f1.index)}
     output["variant_order"] = output["variant"].map(order).fillna(len(order)).astype(int)
     return output
 
@@ -2160,27 +2044,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         "dev",
         dev_df["label"],
         baseline["dev_predictions"],
-        baseline["dev_scores"],
-        n_boot=args.bootstrap,
-        seed=args.seed,
     )
     baseline["metrics_val"] = evaluate_model(
         "Entidades (baseline)",
         "validation",
         val_df["label"],
         baseline["val_predictions"],
-        baseline["val_scores"],
-        n_boot=args.bootstrap,
-        seed=args.seed,
     )
     baseline["metrics_test"] = evaluate_model(
         "Entidades (baseline)",
         "test",
         test_df["label"],
         baseline["test_predictions"],
-        baseline["test_scores"],
-        n_boot=args.bootstrap,
-        seed=args.seed,
     )
 
     print(f"  Score: {score_name}")
@@ -2191,19 +2066,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     print("\n  Test:")
     print(metrics_table(baseline["metrics_test"]).to_string(index=False))
-    print(
-        f"  ROC-AUC (score continuo): {baseline['metrics_test']['roc_auc']:.4f}"
-    )
-    print(
-        f"  IC 95 % F1 macro: "
-        f"[{baseline['metrics_test']['f1_macro_ci_low']:.4f}, "
-        f"{baseline['metrics_test']['f1_macro_ci_high']:.4f}]"
-    )
-    print(
-        f"  IC 95 % MCC: "
-        f"[{baseline['metrics_test']['mcc_ci_low']:.4f}, "
-        f"{baseline['metrics_test']['mcc_ci_high']:.4f}]"
-    )
 
     # Control de longitud: referencia trivial.
     length_best, length_grid = tune_threshold(
@@ -2232,34 +2094,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         "dev",
         dev_df["label"],
         length_control["dev_predictions"],
-        length_control["dev_scores"],
-        n_boot=args.bootstrap,
-        seed=args.seed,
     )
     length_control["metrics_val"] = evaluate_model(
         "Control de longitud",
         "validation",
         val_df["label"],
         length_control["val_predictions"],
-        length_control["val_scores"],
-        n_boot=args.bootstrap,
-        seed=args.seed,
     )
     length_control["metrics_test"] = evaluate_model(
         "Control de longitud",
         "test",
         test_df["label"],
         length_control["test_predictions"],
-        length_control["test_scores"],
-        n_boot=args.bootstrap,
-        seed=args.seed,
     )
     print("\n  Control de longitud (referencia, NO es un método propuesto):")
     print(f"    Umbral elegido en dev: {length_threshold:.2f} palabras")
     print(
         f"    Test: F1 macro={length_control['metrics_test']['f1_macro']:.4f} | "
-        f"MCC={length_control['metrics_test']['mcc']:.4f} | "
-        f"ROC-AUC={length_control['metrics_test']['roc_auc']:.4f}"
+        f"MCC={length_control['metrics_test']['mcc']:.4f}"
     )
 
     # Variantes de scores de entidades.
@@ -2282,9 +2134,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not variants.empty:
         print(
             variants[variants["split"] == "test"][
-                ["variant", "threshold", "auc", "f1_macro", "mcc"]
+                ["variant", "threshold", "f1_macro", "mcc"]
             ]
-            .sort_values("auc", ascending=False)
+            .sort_values("f1_macro", ascending=False)
             .to_string(index=False)
         )
 
@@ -2377,18 +2229,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "validation",
                 llm_validation["label"],
                 llm_validation["llm_pred"],
-                scores=None,
-                n_boot=args.bootstrap,
-                seed=args.seed,
             ),
             "metrics_test": evaluate_model(
                 "LLM few-shot",
                 "test",
                 llm_test["label"],
                 llm_test["llm_pred"],
-                scores=None,
-                n_boot=args.bootstrap,
-                seed=args.seed,
             ),
             "test_predictions": llm_test["llm_pred"].to_numpy(dtype=int),
         }
@@ -2404,16 +2250,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         print("\n  Test:")
         print(metrics_table(llm_result["metrics_test"]).to_string(index=False))
-        print(
-            f"  IC 95 % F1 macro: "
-            f"[{llm_result['metrics_test']['f1_macro_ci_low']:.4f}, "
-            f"{llm_result['metrics_test']['f1_macro_ci_high']:.4f}]"
-        )
-        print(
-            f"  IC 95 % MCC: "
-            f"[{llm_result['metrics_test']['mcc_ci_low']:.4f}, "
-            f"{llm_result['metrics_test']['mcc_ci_high']:.4f}]"
-        )
 
         del model
         try:
@@ -2452,21 +2288,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     print(pd.DataFrame(comparison_rows).to_string(index=False))
 
-    if llm_result is not None:
-        mcnemar = mcnemar_test(
-            test_df["label"].to_numpy(dtype=int),
-            baseline["test_predictions"],
-            llm_result["test_predictions"],
-        )
-        print("\n  McNemar baseline vs. LLM (test):")
-        print(
-            f"    baseline correcto / LLM incorrecto: {mcnemar['a_correct_b_wrong']}"
-        )
-        print(
-            f"    LLM correcto / baseline incorrecto: {mcnemar['b_correct_a_wrong']}"
-        )
-        print(f"    p-valor exacto: {mcnemar['p_value']:.4f}")
-
     print(
         "\n  [INTERPRETACIÓN] Si el control de longitud iguala o supera a los "
         "métodos, el resultado mide verbosidad, no detección semántica."
@@ -2485,7 +2306,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         "max_input_tokens": args.max_input_tokens,
         "batch_size": args.batch_size,
         "max_new_tokens": args.max_new_tokens,
-        "bootstrap": args.bootstrap,
     }
 
     summary = export_results(
@@ -2502,7 +2322,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         graphs_dir=args.graphs_dir,
         results_dir=args.results_dir,
         save_png=args.save_png,
-        n_boot=args.bootstrap,
         seed=args.seed,
     )
 
@@ -2583,7 +2402,6 @@ if __name__ == "__main__":
 #   graphs/exp3/exp3_confusion_baseline.html
 #   graphs/exp3/exp3_confusion_llm.html
 #   graphs/exp3/exp3_model_comparison.html
-#   graphs/exp3/exp3_score_vs_length.html
 #   graphs/exp3/exp3_entity_variants.html
 #   results/exp3/exp3_sample.csv
 #   results/exp3/exp3_predictions_test.csv

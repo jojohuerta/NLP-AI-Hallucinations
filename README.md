@@ -590,9 +590,8 @@ limpias = 200 filas), compara:
 3. **Control de longitud:** un umbral sobre la cantidad de palabras de la
    respuesta. No es un método propuesto; sirve para dimensionar el confound.
 
-Métricas: F1 macro, F1 de alucinación, precisión y recall por clase, MCC,
-matriz de confusión, IC bootstrap al 95 % y test de McNemar entre baseline y
-LLM.
+Métricas: F1 macro, F1 de alucinación, F1 sin alucinación, precisión y recall
+por clase, MCC y matriz de confusión.
 
 Decisiones de diseño:
 
@@ -611,7 +610,7 @@ Decisiones de diseño:
 > referencia trivial que puede igualar o superar a los métodos evaluados, así
 > que el resultado debe interpretarse como separabilidad
 > superficial/verbosidad, no como detección semántica genuina. El gráfico
-> `exp3_score_vs_length.html` visualiza este confound.
+> `exp3_answer_length_distribution.html` visualiza este confound.
 
 Opciones útiles:
 
@@ -649,7 +648,6 @@ graphs/exp3/
   exp3_confusion_baseline.html
   exp3_confusion_llm.html
   exp3_model_comparison.html
-  exp3_score_vs_length.html
   exp3_entity_variants.html
 
 results/exp3/
@@ -689,8 +687,7 @@ python experiments/exp3_logical_consistency.py --save-png
 ## Reproducibilidad
 
 - Todos los scripts usan `--seed 42` por defecto.
-- Los splits y muestreos son deterministas; el Experimento 3 también fija sus
-  remuestreos bootstrap con la semilla.
+- Los splits y muestreos son deterministas.
 - Los experimentos 2, 2b y 3 desactivan `cudnn.benchmark` y fijan
   `torch.backends.cudnn.deterministic`.
 - El LLM usa decodificación greedy (`do_sample=False`).

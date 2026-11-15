@@ -532,11 +532,11 @@ graphs/exp2b/exp2b_control_ablation.html
 Score: `unsupported_entity_rate` (fracción de entidades de la respuesta que no
 aparecen en `query + context`). Umbral elegido en desarrollo: **0,035734**.
 
-| Split | n | F1 macro | MCC | ROC-AUC | IC 95 % F1 | IC 95 % MCC |
-|---|---:|---:|---:|---:|---|---|
-| Desarrollo | 100 | 0,5711 | 0,1983 | 0,5656 | [0,4715, 0,6658] | [0,0038, 0,3939] |
-| Validación | 50 | 0,5536 | 0,1236 | 0,5408 | [0,4066, 0,6847] | [−0,1574, 0,3869] |
-| Test | 50 | **0,6528** | **0,4345** | 0,6736 | [0,5225, 0,7831] | [0,2203, 0,6218] |
+| Split | n | F1 macro | MCC |
+|---|---:|---:|---:|
+| Desarrollo | 100 | 0,5711 | 0,1983 |
+| Validación | 50 | 0,5536 | 0,1236 |
+| Test | 50 | **0,6528** | **0,4345** |
 
 **Detalle en test:**
 
@@ -558,11 +558,11 @@ escapan 15 de 25 alucinaciones.
 
 Score: `n_words`. Umbral elegido en desarrollo: **49,0**.
 
-| Split | n | F1 macro | MCC | ROC-AUC | IC 95 % F1 | IC 95 % MCC |
-|---|---:|---:|---:|---:|---|---|
-| Desarrollo | 100 | 0,8591 | 0,7294 | 0,8712 | [0,7864, 0,9274] | [0,5930, 0,8561] |
-| Validación | 50 | 0,7537 | 0,5489 | 0,8416 | [0,6186, 0,8586] | [0,3092, 0,7349] |
-| Test | 50 | **0,8397** | **0,6822** | 0,8728 | [0,7182, 0,9388] | [0,4480, 0,8796] |
+| Split | n | F1 macro | MCC |
+|---|---:|---:|---:|
+| Desarrollo | 100 | 0,8591 | 0,7294 |
+| Validación | 50 | 0,7537 | 0,5489 |
+| Test | 50 | **0,8397** | **0,6822** |
 
 **Detalle en test:**
 
@@ -582,10 +582,10 @@ Score: `n_words`. Umbral elegido en desarrollo: **49,0**.
 Modelo: `Qwen/Qwen2.5-3B-Instruct`. Cuatro ejemplos etiquetados, contexto
 recuperado por TF-IDF, decodificación greedy, `max_new_tokens = 12`.
 
-| Split | n | F1 macro | MCC | IC 95 % F1 | IC 95 % MCC |
-|---|---:|---:|---:|---|---|
-| Validación | 50 | 0,5942 | 0,2060 | [0,4492, 0,7196] | [−0,0727, 0,4695] |
-| Test | 50 | **0,6753** | **0,3708** | [0,5398, 0,7971] | [0,1088, 0,6103] |
+| Split | n | F1 macro | MCC |
+|---|---:|---:|---:|
+| Validación | 50 | 0,5942 | 0,2060 |
+| Test | 50 | **0,6753** | **0,3708** |
 
 **Detalle en test:**
 
@@ -610,41 +610,29 @@ recuperado por TF-IDF, decodificación greedy, `max_new_tokens = 12`.
 | Tokens de prompt mínimos | 1.567 |
 | Tokens de prompt medianos | 1.835 |
 | Tokens de prompt máximos | 3.087 |
-| Tiempo de generación | 29,77 s |
+| Tiempo de generación | 30,84 s |
 
 Los 4 ejemplos few-shot usados fueron los `uid` 25 (alucinación), 176 (limpia),
 19 (alucinación) y 171 (limpia), todos con 3 oraciones de contexto.
 
-### McNemar: baseline vs. LLM
-
-| Dato | Valor |
-|---|---:|
-| Baseline correcto / LLM incorrecto | 12 |
-| LLM correcto / baseline incorrecto | 12 |
-| Discordantes | 24 |
-| p | **1,0000** |
-
-No hay diferencia estadísticamente detectable entre el baseline de entidades y
-el LLM few-shot en el test.
-
 ### Variantes de entidades y controles
 
-| Variante | Split | Umbral | AUC | F1 macro | MCC |
-|---|---|---:|---:|---:|---:|
-| Cobertura de entidades de la query | Dev | 1,0 | 0,6836 | 0,6795 | 0,3612 |
-| Cobertura de entidades de la query | Test | 1,0 | **0,7488** | **0,7200** | **0,4400** |
-| Cantidad de entidades en la respuesta | Dev | 3,0 | 0,6962 | 0,7172 | 0,4491 |
-| Cantidad de entidades en la respuesta | Test | 3,0 | 0,7392 | 0,6753 | 0,3708 |
-| Entidades no respaldadas (fracción) | Dev | 0,0357 | 0,5656 | 0,5711 | 0,1983 |
-| Entidades no respaldadas (fracción) | Test | 0,0357 | 0,6736 | 0,6528 | 0,4345 |
-| Entidades no respaldadas (conteo) | Dev | 1,0 | 0,5844 | 0,5711 | 0,1983 |
-| Entidades no respaldadas (conteo) | Test | 1,0 | 0,6824 | 0,6528 | 0,4345 |
-| Números no respaldados (fracción) | Dev | 0,0647 | 0,5196 | 0,3912 | 0,1021 |
-| Números no respaldados (fracción) | Test | 0,0647 | 0,5384 | 0,4415 | 0,1474 |
-| Números no respaldados (conteo) | Dev | 1,0 | 0,5200 | 0,3912 | 0,1021 |
-| Números no respaldados (conteo) | Test | 1,0 | 0,5408 | 0,4415 | 0,1474 |
-| Longitud de la respuesta (control) | Dev | 49,0 | 0,8712 | 0,8591 | 0,7294 |
-| Longitud de la respuesta (control) | Test | 49,0 | **0,8728** | **0,8397** | **0,6822** |
+| Variante | Split | Umbral | F1 macro | MCC |
+|---|---|---:|---:|---:|
+| Cobertura de entidades de la query | Dev | 1,0 | 0,6795 | 0,3612 |
+| Cobertura de entidades de la query | Test | 1,0 | **0,7200** | **0,4400** |
+| Cantidad de entidades en la respuesta | Dev | 3,0 | 0,7172 | 0,4491 |
+| Cantidad de entidades en la respuesta | Test | 3,0 | 0,6753 | 0,3708 |
+| Entidades no respaldadas (fracción) | Dev | 0,0357 | 0,5711 | 0,1983 |
+| Entidades no respaldadas (fracción) | Test | 0,0357 | 0,6528 | 0,4345 |
+| Entidades no respaldadas (conteo) | Dev | 1,0 | 0,5711 | 0,1983 |
+| Entidades no respaldadas (conteo) | Test | 1,0 | 0,6528 | 0,4345 |
+| Números no respaldados (fracción) | Dev | 0,0647 | 0,3912 | 0,1021 |
+| Números no respaldados (fracción) | Test | 0,0647 | 0,4415 | 0,1474 |
+| Números no respaldados (conteo) | Dev | 1,0 | 0,3912 | 0,1021 |
+| Números no respaldados (conteo) | Test | 1,0 | 0,4415 | 0,1474 |
+| Longitud de la respuesta (control) | Dev | 49,0 | 0,8591 | 0,7294 |
+| Longitud de la respuesta (control) | Test | 49,0 | **0,8397** | **0,6822** |
 
 ### Análisis de errores
 
@@ -662,7 +650,8 @@ el LLM few-shot en el test.
 que menos errores comete (4). Las alucinaciones de Phantom son
 sistemáticamente más largas, así que el resultado mide separabilidad
 superficial/verbosidad, no detección semántica genuina. El gráfico
-`exp3_score_vs_length.html` muestra la relación entre score y longitud.
+`exp3_answer_length_distribution.html` muestra la distribución de longitudes
+por clase.
 
 ### Archivos generados
 
@@ -686,7 +675,6 @@ graphs/exp3/exp3_threshold_curve.html
 graphs/exp3/exp3_confusion_baseline.html
 graphs/exp3/exp3_confusion_llm.html
 graphs/exp3/exp3_model_comparison.html
-graphs/exp3/exp3_score_vs_length.html
 graphs/exp3/exp3_entity_variants.html
 ```
 
@@ -705,7 +693,7 @@ graphs/exp3/exp3_entity_variants.html
    lejos de 0,98. El control de longitud cae exactamente al piso (0,3333).
 4. **En el Exp. 3, la longitud gana:** un umbral trivial sobre la cantidad de
    palabras (F1 0,84) supera al baseline de entidades (0,65) y al LLM few-shot
-   (0,68). McNemar no encuentra diferencia entre baseline y LLM (p = 1,0).
+   (0,68).
 5. **Conclusión metodológica:** buena parte del rendimiento reportado en tareas
    de detección de alucinaciones puede explicarse por artefactos del dataset
    (fuente, tema, longitud, puntuación). Los experimentos 2b y 3 están diseñados
